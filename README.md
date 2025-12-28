@@ -1,5 +1,7 @@
 # Fomo_julia: High-Order Elastic Wave Finite-Difference Simulator
 
+[中文文档](README_zh.md) || [English](README.md)  
+
 **Fomo_julia** is a high-performance 2D isotropic elastic wave numerical simulator developed in Julia. It employs a high-order staggered-grid finite-difference (SGFD) scheme combined with an advanced Hybrid Absorbing Boundary Condition (HABC). It provides a user-friendly interface for survey geometry setup, aiming to be an efficient and accessible tool for seismic wavefield modeling (forward modeling).
 
 ![Simulation Example](homogeneous_test.gif)
