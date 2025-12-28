@@ -1,0 +1,22 @@
+# Julia dependencies
+Manifest.toml
+/packages/
+/artifacts/
+/scratch/
+
+# Data and Models (Very Important!)
+model/*.sgy
+model/*.bin
+*.seam
+*.segy
+
+# Outputs and Plots
+*.gif
+*.png
+*.jpg
+*.mp4
+results/
+
+# System files
+.DS_Store
+Thumbs.db
