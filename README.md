@@ -7,11 +7,11 @@
 ![Simulation Example](homogeneous_test.gif)
 
 <p align="center">
-  <video src="https://github.com/Wuheng10086/Fomo_julia/raw/main/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
+  <video src="https://github.com/Wuheng10086/Fomo_julia/blob/master/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
 </p>
 
 <p align="center">
-  <video src="https://github.com/Wuheng10086/Fomo_julia/raw/main/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
+  <video src="https://github.com/Wuheng10086/Fomo_julia/blob/master/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
 </p>
 
 ## ✨ Core Features
