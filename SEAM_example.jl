@@ -1,99 +1,112 @@
 # SEAM_example.jl
+# 
+# Example Script: CPU-based 2D Elastic Wave Simulation
+# Project: Wavefield.jl - SEAM Phase I Model Workflow
+# ==============================================================================
+# Workflow:
+# 1. Segy Data I/O: Load industrial SEAM velocity and density models.
+# 2. Resampling: Interpolate SEAM data onto a high-resolution simulation grid.
+# 3. Physics Setup: Configure Stress-Free Surface and HABC boundaries.
+# 4. Numerical Engine: Standard staggered-grid Finite Difference (CPU).
+# 5. Visualization: Export high-fidelity shot gathers and propagation videos.
+# ==============================================================================
+
 import Pkg
 Pkg.activate(".")
 
-using Plots, Interpolations, Printf
+using Plots, Interpolations, Printf, Statistics
 
-# Include core components
+# Include core components (CPU versions)
 include("src/Structures.jl")
 include("src/Kernels.jl")
 include("src/Utils.jl")
 include("src/Solver.jl")
 
 """
-Run a simulation using the industrial standard SEAM elastic model.
-This script demonstrates handling of large-scale SEG-Y data and 
-complex subsurface structures.
+    run_seam_simulation()
+
+Main entry point for the CPU-based SEAM simulation.
+Handles the end-to-end workflow from SGY loading to data export.
 """
 function run_seam_simulation()
-    # --- 1. Load SEAM Model Data (SEG-Y format) ---
-    @info "Loading SEAM model data..."
-    # Assuming .sgy files are located in the /model directory
-    Vp = load_segy_model("./model/SEAM_Vp_Elastic_N23900.sgy")'
-    Vs = load_segy_model("./model/SEAM_Vs_Elastic_N23900.sgy")'
-    Rho = load_segy_model("./model/SEAM_Den_Elastic_N23900.sgy")'
+    # --- 1. DATA LOADING & PRE-PROCESSING ---
+    @info "Loading SEAM industrial model data (SEG-Y)..."
+    Vp_raw = load_segy_model("./model/SEAM_Vp_Elastic_N23900.sgy")'
+    Vs_raw = load_segy_model("./model/SEAM_Vs_Elastic_N23900.sgy")'
+    Rho_raw = load_segy_model("./model/SEAM_Den_Elastic_N23900.sgy")'
 
-    # Data resolution info
-    dx_m, dz_m = 1.25f0, 1.25f0  # Original model sampling is 12.5m, but I don't have so much memory QAQ
-    dx, dz = 1.25f0, 1.25f0      # Simulation grid sampling
+    # Resolution Configuration
+    dx_m, dz_m = 12.5f0, 12.5f0  # Source model resolution (m)
+    dx, dz = 5.0f0, 5.0f0    # Target simulation resolution (m)
+    nbc = 30              # Absorbing boundary layers
+    M_order = 4               # 8th-order spatial FD
+    total_time = 4.0             # Recording duration (s)
 
-    # --- 2. Physics & Simulation Parameters ---
-    f0 = 25.0f0           # Peak frequency (Hz)
-    nbc = 25              # Thicker HABC layers for complex reflections
-    M_order = 4           # 8th-order spatial FD accuracy
-    nt = 4000             # Total time steps
-
-    # --- 3. Stability Condition (CFL) ---
-    v_max = maximum(Vp)
-    # dt < dx / (v_max * sqrt(2)) for 2D. We use a safety factor.
+    # --- 2. STABILITY & GRID INITIALIZATION ---
+    v_max = maximum(Vp_raw)
+    # CFL condition with a safety factor for heterogeneous media
     dt = Float32(0.5 * dx / (v_max * 1.5))
-    @info "Stability check" v_max dt_calculated = dt
+    nt = ceil(Int, total_time / dt)
+    t_vec = (0:nt-1) .* dt
 
-    # --- 4. Model Initialization ---
-    # Enable Free Surface (free_surf=true) to simulate topography/sea surface
-    medium = init_medium_from_data(dx, dz, dx_m, dz_m, Vp, Vs, Rho, nbc, M_order; free_surf=true)
-    @info "Grid dimensions" nx = medium.nx nz = medium.nz nx_p = medium.nx_p nz_p = medium.nz_p
+    @info "CFL Analysis" Vmax = v_max DT = dt TotalSteps = nt
 
-    # --- 5. Boundary & Source Setup ---
-    v_ref = (minimum(Vp) + maximum(Vp)) / 2.0f0
+    # Interpolate raw data to staggered computational grid
+    medium = init_medium_from_data(dx, dz, dx_m, dz_m, Vp_raw, Vs_raw, Rho_raw, nbc, M_order; free_surf=true)
+
+    # Boundary (HABC) configuration
+    v_ref = (minimum(Vp_raw) + maximum(Vp_raw)) / 2.0f0
     habc = init_habc(medium.nx, medium.nz, nbc, dt, dx, dz, v_ref)
 
-    # Ricker Wavelet with proper time delay (1.5/f0)
-    t = (0:nt-1) .* dt
+    # --- 3. SURVEY GEOMETRY ---
+    # Source: 25Hz Ricker Wavelet
+    f0 = 25.0f0
     t0 = 1.5f0 / f0
-    wavelet = @. (1 - 2 * (pi * f0 * (t - t0))^2) * exp(-(pi * f0 * (t - t0))^2)
+    wavelet = @. (1 - 2 * (pi * f0 * (t_vec - t0))^2) * exp(-(pi * f0 * (t_vec - t0))^2)
 
-    # Source: Centered horizontally, 5m below the surface
+    # Geometry: Center source at 5m depth, full line of receivers
     x_src = [(medium.nx_p * dx) / 2.0]
     z_src = [5.0]
     sources = setup_sources(medium, x_src, z_src, wavelet, "pressure")
 
-    # Receivers: Horizontal line at 5m depth
     x_rec_start, x_rec_end = 0.0, medium.nx_p * dx
     receivers = setup_line_receivers(medium, x_rec_start, x_rec_end, 10.0, 5.0, nt, "vz")
 
     geometry = Geometry(sources, receivers)
 
-    # Export a visual check of the model and survey geometry
+    # QC: Save a diagnostic plot of the model and survey layout
     plot_model_setup(medium, geometry; savepath="SEAM_setup_check.png")
 
-    # --- 6. Memory Allocation ---
+    # --- 4. WAVEFIELD ALLOCATION ---
     wave = Wavefield(
+        zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz), # vx, vz
         zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz),
-        zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz),
-        zeros(Float32, medium.nx, medium.nz),
-        zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz),
+        zeros(Float32, medium.nx, medium.nz), # stresses
+        zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz), # old fields
         zeros(Float32, medium.nx, medium.nz), zeros(Float32, medium.nx, medium.nz),
         zeros(Float32, medium.nx, medium.nz)
     )
     fd_a = get_fd_coefficients(M_order)
 
-    # --- 7. Execution ---
-    @info "Starting Numerical Simulation..."
-    anim = Animation()
-    solve_elastic!(wave, medium, habc, fd_a, geometry, dt, nt, M_order, anim)
+    # Video Settings: Downsample wavefield snapshots to save disk space
+    vc = VideoConfig(50, 4, 0.05f0, :p, "seam_p_wave_cpu.mp4", 60)
 
-    # --- 8. Final Output ---
-    gif(anim, "SEAM_wavefield.gif", fps=20)
+    # --- 5. EXECUTION ---
+    @info "Starting CPU Numerical Simulation..."
+    @time solve_elastic!(wave, medium, habc, fd_a, geometry, dt, nt, M_order, vc)
 
-    # Generate Shot Gather plot
-    p_gather = heatmap(geometry.receivers.data,
-        yflip=true, color=:seismic,
-        title="SEAM Shot Gather (Vz Component)",
-        xlabel="Receiver Index", ylabel="Time Step")
-    savefig(p_gather, "SEAM_shot_gather.png")
-    @info "Results saved: SEAM_wavefield.gif and SEAM_shot_gather.png"
+    # --- 6. POST-PROCESSING ---
+    @info "Simulation complete. Generating outputs..."
+
+    # Use the high-fidelity plotting function (Ensures no interpolation & correct axes)
+    save_shot_gather_raw(geometry.receivers.data, dt, "SEAM_shot_gather_cpu.png";
+        title="SEAM Shot Gather (CPU - Vz Component)")
+
+    # Export raw binary data for external processing (Python/C++)
+    save_shot_gather_bin(geometry.receivers.data, "SEAM_shot_gather_cpu.bin")
 end
 
-# Run the SEAM test
-run_seam_simulation()
+# Entry Point
+if abspath(PROGRAM_FILE) == @__FILE__
+    run_seam_simulation()
+end

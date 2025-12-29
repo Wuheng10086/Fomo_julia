@@ -94,3 +94,25 @@ struct Geometry
     sources::Vector{Source}
     receivers::Receivers
 end
+
+"""
+    VideoConfig(save_gap, stride, v_max, mode, filename)
+
+Configuration for wavefield visualization and GIF generation during simulation.
+
+# Fields
+- `save_gap::Int`: Temporal downsampling. Capture a frame every `save_gap` time steps.
+- `stride::Int`: Spatial downsampling. Take every `stride`-th grid point to reduce memory usage (e.g., `stride=5` uses 1/25 of the total points).
+- `v_max::Float32`: Colorbar saturation limit. Sets the range for `clim` as `(-v_max, v_max)`.
+- `mode::Symbol`: Wavefield component to visualize. Options: `:p` (pressure), `:vx`, `:vz`.
+- `filename::String`: Target path for the output `.mp4` file.
+- `fps::Int`: Frames per second for the output video.
+"""
+struct VideoConfig
+    save_gap::Int
+    stride::Int
+    v_max::Float32
+    mode::Symbol
+    filename::String
+    fps::Int
+end
