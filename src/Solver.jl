@@ -1,3 +1,5 @@
+# src/Solver.jl
+
 using Printf, Dates
 using GLMakie
 using ProgressMeter
@@ -74,15 +76,20 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
         copy_boundary_strip!(W.tzz_old, W.tzz, nbc, nx, nz, M.is_free_surface)
         copy_boundary_strip!(W.txz_old, W.txz, nbc, nx, nz, M.is_free_surface)
 
-        # 2. Source Injection
-        for src in G.sources
-            if k <= length(src.wavelet)
-                wav = Float32(src.wavelet[k])
+        src = G.sources
+        if k <= length(src.wavelet)
+            wav = src.wavelet[k]
+            for s_idx in 1:length(src.i)
+                si, sj = src.i[s_idx], src.j[s_idx]
+
                 if src.type == "pressure"
-                    W.txx[src.i, src.j] += wav
-                    W.tzz[src.i, src.j] += wav
+                    W.txx[si, sj] += wav
+                    W.tzz[si, sj] += wav
                 elseif src.type == "force_z"
-                    W.vz[src.i, src.j] += wav * (dt_f32 / M.rho_vz[src.i, src.j])
+                    # 注意：这里假设所有震源共享同一个 rho 分量
+                    W.vz[si, sj] += wav * (dt_f32 / M.rho_vz[si, sj])
+                elseif src.type == "force_x"
+                    W.vx[si, sj] += wav * (dt_f32 / M.rho_vx[si, sj])
                 end
             end
         end
@@ -103,9 +110,9 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
         # 6. Free Surface Condition (z = 0 top boundary)
         if M.is_free_surface
             j_fs = pad + 1
-            @turbo for i in 1:nx
-                W.tzz[i, j_fs] = 0.0f0
-                W.txz[i, j_fs] = 0.0f0
+            @tturbo for i in 1:nx, j in j_fs-5:j_fs
+                W.tzz[i, j] = 0.0f0
+                W.txz[i, j] = 0.0f0
             end
         end
 
@@ -125,8 +132,8 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
             s = stride_val
             if vc.mode == :p
                 plot_data_obs[] = @views (W.txx[1:s:end, 1:s:end] .+ W.tzz[1:s:end, 1:s:end]) .* 0.5f0
-            elseif vc.mode == :vx
-                plot_data_obs[] = @views W.vx[1:s:end, 1:s:end]
+            elseif vc.mode == :Vel
+                plot_data_obs[] = @views sqrt.(W.vx[1:s:end, 1:s:end] .^ 2 + W.vz[1:s:end, 1:s:end] .^ 2)
             else
                 plot_data_obs[] = @views W.vz[1:s:end, 1:s:end]
             end
@@ -165,4 +172,75 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
     finally
         println("\nSimulation completed successfully.")
     end
+end
+
+function solve_one_shot(W, M, H, a, G, dt, nt, M_order, vc=nothing; i_src=nothing, output_shot_png=true, output_shot_bin=true)
+    n_sources = length(G.sources)
+
+    if n_sources == 0
+        error("No sources defined in the geometry.")
+    end
+
+    if n_sources > 1 && i_src === nothing
+        error("Multiple sources found. Please specify i_src.")
+    end
+
+    idx = (n_sources == 1) ? 1 : i_src
+
+    # 在 solve_one_shot 内部
+    single_src = Sources([G.sources.i[idx]], [G.sources.j[idx]], G.sources.type, G.sources.wavelet)
+    G_isrc = Geometry(single_src, G.receivers)
+
+    solve_elastic!(W, M, H, a, G_isrc, dt, nt, M_order, vc)
+
+    rec_type = G.receivers.type
+    if output_shot_png
+        save_shot_gather_raw(G.receivers.data, dt, "shot$i_src-$rec_type.png";
+            title="Shot Gather $rec_type")
+    end
+    if output_shot_bin
+        save_shot_gather_bin(G.receivers.data, "shot$i_src-$rec_type.bin")
+    end
+
+end
+
+function run_multi_shots(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, dt, nt, M_order;
+    vc::Union{VideoConfig,Nothing}=nothing,
+    output_shot_png::Bool=false,
+    output_shot_bin::Bool=true)
+
+    n_sources = length(G.sources)
+
+    if n_sources == 0
+        error("No sources defined in the geometry.")
+    end
+
+    for i_src in 1:n_sources
+        reset_wavefield!(W)
+        G.receivers.data .= 0f0
+
+        if vc !== nothing
+            vc.filename = "$(vc.mode)-shot$i_src.mp4"
+        end
+
+        solve_one_shot(W, M, H, a, G, dt, nt, M_order, vc;
+            i_src=i_src,
+            output_shot_png=output_shot_png,
+            output_shot_bin=output_shot_bin)
+
+        @info "Shot $i_src / $n_sources completed."
+    end
+
+    println("\nAll shots completed successfully.")
+end
+
+
+function reset_wavefield!(W::Wavefield)
+    # 假设你的 Wavefield 结构体里有这些 CuArray 或 Array
+    W.vx .= 0f0
+    W.vz .= 0f0
+    W.txx .= 0f0
+    W.tzz .= 0f0
+    W.txz .= 0f0
+    # 如果有辅助波场也要清零
 end

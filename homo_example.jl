@@ -10,15 +10,8 @@
 import Pkg
 Pkg.activate(".")
 
-using Plots
-using LinearAlgebra
-using Printf
-
-# Include project modules
-include("src/Structures.jl")
-include("src/Utils.jl")
-include("src/Kernels.jl")
-include("src/Solver.jl")
+include("src/Elastic2D.jl")
+using .Elastic2D
 
 """
     run_homogeneous_test()
@@ -28,18 +21,19 @@ The simulation uses a Ricker wavelet source and records a video of the pressure 
 """
 function run_homogeneous_test()
     # --- 1. Simulation Setup ---
-    nx_p, nz_p = 400, 300           # Physical domain grid dimensions
-    dx, dz = 1.25f0, 1.25f0         # Grid spacing (meters)
-    nbc = 25                        # HABC boundary layer width (grid points)
-    M_order = 4                     # Half-stencil length (8th-order spatial accuracy)
-    nt = 2000                       # Total number of time steps
-    dt = 0.00015f0                  # Time step (seconds) - chosen for CFL stability
+    nx_p, nz_p = 1200, 800           # Physical domain grid dimensions
+    dx, dz = 1.0f0, 1.0f0                                  # Grid spacing (meters)
+    nbc = 100                                                # HABC boundary layer width (grid points)
+    M_order = 5                                             # Half-stencil length (8th-order spatial accuracy)
+    nt = 7000                                               # Total number of time steps
+    dt = 0.00005f0                                          # Time step (seconds) - chosen for CFL stability
 
     # --- 2. Define Homogeneous Medium ---
     # Material Properties: Vp = 2500 m/s, Vs = 1450 m/s, Rho = 2000 kg/m^3
     vp_raw = fill(2500.0f0, nx_p, nz_p)
     vs_raw = fill(1450.0f0, nx_p, nz_p)
     rho_raw = fill(2000.0f0, nx_p, nz_p)
+
 
     # Initialize Medium structure 
     # set free_surf=false to apply absorbing boundaries on all four sides
@@ -59,10 +53,10 @@ function run_homogeneous_test()
 
     # --- 4. Source & Receiver Geometry ---
     # Source: Ricker wavelet injected at the center of the domain
-    sx, sz = (nx_p / 2) * dx, (nz_p / 2) * dz
+    sx, sz = (nx_p / 2) * dx, (nz_p / 2) * dz * 0.1
     f0 = 40.0f0                     # Peak frequency (Hz)
     t = (0:nt-1) .* dt
-    t0 = 0.04f0                     # Time delay (seconds)
+    t0 = 0.02f0                     # Time delay (seconds)
 
     @info "time steps: $nt"
 
@@ -70,7 +64,7 @@ function run_homogeneous_test()
     tau = pi * f0 .* (t .- t0)
     wavelet = (1.0f0 .- 2.0f0 .* tau .^ 2) .* exp.(-tau .^ 2)
 
-    sources = setup_sources(medium, [sx], [sz], wavelet, "pressure")
+    sources = setup_sources(medium, [sx], [sz], 1f6 .* wavelet, "pressure")
 
     # Receivers: A horizontal line array 100m below the source
     receivers = setup_line_receivers(medium, 0.0, 500.0, 10.0, (nz_p / 2) * dz + 100.0, nt, "vz")
@@ -91,7 +85,7 @@ function run_homogeneous_test()
     # Video Configuration:
     # save_gap=20 (frames), stride=1 (no downsampling), v_max=0.05 (color scale), 
     # mode=:p (Pressure field), filename="Homogeneous.mp4", fps=80
-    vc = VideoConfig(20, 1, 0.05f0, :p, "Homogeneous.mp4", 80)
+    vc = VideoConfig(20, 1, 0.005f0, :Vel, "Homogeneous3.mp4", 1 / dt * 0.04)
 
     # Run simulation and export video
     solve_elastic!(wavefield, medium, habc, a, geometry, dt, nt, M_order, vc)

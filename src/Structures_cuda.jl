@@ -1,7 +1,7 @@
-# src/Structures_cuda.jl
-#
+# ==============================================================================
+# Structures_cuda.jl
 # GPU-compatible data structures for 2D Elastic Wave Modeling.
-# These structures hold CuArrays to ensure all computations stay on the device.
+# ==============================================================================
 
 using CUDA
 
@@ -11,19 +11,14 @@ using CUDA
 
 """
     WavefieldGPU{T}
-Container for wavefield tensors on VRAM.
-T is typically `CuArray{Float32, 2}`. 
-Includes current fields and 'old' fields for Higdon ABC temporal finite-differences.
+Container for wavefield tensors on VRAM. `T` is typically `CuArray{Float32, 2}`.
 """
 struct WavefieldGPU{T<:AbstractMatrix{Float32}}
-    # Current wavefields
     vx::T
     vz::T
     txx::T
     tzz::T
     txz::T
-
-    # Historical wavefields (required for HABC)
     vx_old::T
     vz_old::T
     txx_old::T
@@ -33,42 +28,40 @@ end
 
 """
     MediumGPU{T}
-Physical parameters and grid information stored on VRAM.
-Pre-interpolated onto the staggered grid to minimize kernel complexity.
+Physical parameters on VRAM. Parameters are pre-sampled at staggered grid nodes:
+- rho_vx: (0, 0)
+- lam, mu_txx: (0.5, 0)
+- mu_txz: (0, 0.5)
+- rho_vz: (0.5, 0.5)
 """
 struct MediumGPU{T<:AbstractMatrix{Float32}}
     nx::Int
     nz::Int
-    nx_p::Int   # Padded dimensions
+    nx_p::Int
     nz_p::Int
     dx::Float32
     dz::Float32
+    M::Int
     pad::Int
-
-    # Elastic parameters (Lamé parameters and Density)
     lam::T
-    mu_txx::T   # Mu sampled at txx positions
-    mu_txz::T   # Mu sampled at txz positions
-    rho_vx::T   # Rho sampled at vx positions
-    rho_vz::T   # Rho sampled at vz positions
-
+    mu_txx::T
+    mu_txz::T
+    rho_vx::T
+    rho_vz::T
     is_free_surface::Bool
 end
 
 """
     HABCConfigGPU{T}
-Higdon Absorbing Boundary Condition coefficients and weight maps on VRAM.
+Higdon ABC coefficients and hybrid weighting maps on VRAM.
 """
 struct HABCConfigGPU{T<:AbstractMatrix{Float32}}
     nbc::Int
-    # Higdon finite-difference coefficients
     qx::Float32
     qz::Float32
     qt_x::Float32
     qt_z::Float32
     qxt::Float32
-
-    # Boundary weighting maps (1.0 in interior, < 1.0 in BC zone)
     w_vx::T
     w_vz::T
     w_tau::T
@@ -76,24 +69,23 @@ end
 
 """
     SourcesGPU
-Source locations and pre-computed wavelets transferred to GPU memory.
+Source positions (Int32) and the source time function (wavelet) on VRAM.
 """
-struct SourcesGPU{T<:AbstractMatrix{Float32},I<:AbstractVector{Int32}}
-    i::I                 # Grid indices on GPU
-    j::I
-    wavelets::T          # [nt, n_sources] matrix
-    types::Vector{Symbol} # Source types (kept on CPU as it is meta-data)
+struct SourcesGPU
+    i0::Int32                    # Source X-index
+    j0::Int32                    # Source Z-index
+    wavelet::CuArray{Float32,1}  # Source signal [nt]
 end
 
 """
-    ReceiversGPU
-Receiver locations and data buffers on VRAM.
+    ReceiversGPU{T, I}
+Receiver positions and the recorded data buffer on VRAM.
 """
 struct ReceiversGPU{T<:AbstractMatrix{Float32},I<:AbstractVector{Int32}}
-    i::I
-    j::I
-    data::T              # [nt, n_receivers] buffer
-    type::Symbol
+    i::I                 # Receiver X-indices
+    j::I                 # Receiver Z-indices
+    data::T              # Buffer [nt × n_receivers]
+    type::Symbol         # :vx, :vz, :p, etc.
 end
 
 struct GeometryGPU
@@ -105,10 +97,6 @@ end
 # 2. CONVERSION CONSTRUCTORS (CPU -> GPU)
 # ==============================================================================
 
-"""
-    to_gpu(W::Wavefield)
-One-click migration of a CPU Wavefield object to the GPU.
-"""
 function to_gpu(W::Wavefield)
     return WavefieldGPU(
         CuArray(W.vx), CuArray(W.vz),
@@ -118,14 +106,10 @@ function to_gpu(W::Wavefield)
     )
 end
 
-"""
-    to_gpu(M::Medium)
-Transfers medium parameters to VRAM, ensuring Float32 precision for performance.
-"""
 function to_gpu(M::Medium)
     return MediumGPU(
         M.nx, M.nz, M.nx_p, M.nz_p,
-        Float32(M.dx), Float32(M.dz), M.pad,
+        Float32(M.dx), Float32(M.dz), M.M, M.pad,
         CuArray(Float32.(M.lam)),
         CuArray(Float32.(M.mu_txx)),
         CuArray(Float32.(M.mu_txz)),
@@ -135,10 +119,6 @@ function to_gpu(M::Medium)
     )
 end
 
-"""
-    to_gpu(H::HABCConfig)
-Transfers HABC parameters and weighting matrices to VRAM.
-"""
 function to_gpu(H::HABCConfig)
     return HABCConfigGPU(
         H.nbc,
@@ -150,13 +130,8 @@ function to_gpu(H::HABCConfig)
     )
 end
 
-"""
-    to_gpu(G::Geometry, nt::Int)
-Transfers source/receiver geometry to GPU. 
-Initializes an empty data buffer for receivers on the device.
-"""
 function to_gpu(G::Geometry, nt::Int)
-    # 1. Receiver Migration
+    # --- Receiver Migration ---
     d_rec_i = CuArray(Int32.(G.receivers.i))
     d_rec_j = CuArray(Int32.(G.receivers.j))
     d_rec_data = CUDA.zeros(Float32, nt, length(G.receivers.i))
@@ -166,25 +141,16 @@ function to_gpu(G::Geometry, nt::Int)
         Symbol(G.receivers.type)
     )
 
-    # 2. Source Migration
-    n_src = length(G.sources)
-    wavelet_matrix = zeros(Float32, nt, n_src)
-    src_i = Int32[]
-    src_j = Int32[]
-
-    for (idx, s) in enumerate(G.sources)
-        # Fill wavelet matrix (ensures nt length matching)
-        len_w = min(nt, length(s.wavelet))
-        wavelet_matrix[1:len_w, idx] .= Float32.(s.wavelet[1:len_w])
-        push!(src_i, Int32(s.i))
-        push!(src_j, Int32(s.j))
-    end
+    # --- Source Migration ---
+    # 修正：直接将 CPU 上的 wavelet 截取或填充到 nt 长度，然后转为 GPU 向量
+    wavelet_cpu = zeros(Float32, nt)
+    len_w = min(nt, length(G.sources.wavelet))
+    wavelet_cpu[1:len_w] .= Float32.(G.sources.wavelet[1:len_w])
 
     src_gpu = SourcesGPU(
-        CuArray(src_i),
-        CuArray(src_j),
-        CuArray(wavelet_matrix),
-        [Symbol(s.type) for s in G.sources]
+        Int32(G.sources.i[1]),
+        Int32(G.sources.j[1]),
+        CuArray(wavelet_cpu)
     )
 
     return GeometryGPU(src_gpu, rec_gpu)

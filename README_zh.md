@@ -1,6 +1,6 @@
 # Fomo_julia: 高阶弹性波有限差分数值模拟器
 
-[中文文档](README_zh.md) || [English](README.md) 
+[中文文档](README_zh.md) || [English](README.md)  
 
 **Fomo_julia** 是一个基于 Julia 语言开发的高性能二维各向同性弹性波数值模拟器。它采用空间高阶交错网格有限差分方案，并集成了先进的混合吸收边界条件（HABC），同时提供了便捷的观测系统布设工具，希望能为地震波场建模（正演）提供高效、易用的研究平台。
 
@@ -41,7 +41,7 @@
 <img src="SEAM_setup_check.png" style="width:70%;" alt="SEAM Vp & Geometry">  
 *Vp 模型与观测系统布设*
 
-<img src="SEAM_Vz_Raw.png" style="width:70%;" alt="炮集">   
+<img src="SEAM_Vz_Gather.png" style="width:70%;" alt="炮集">   
 
 *模拟得到的炮集记录*
 
@@ -82,6 +82,8 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 * `src/Solver.jl`: 负责时间步循环调度、震源注入及数据记录。
 * `src/Utils.jl`: 包含网格插值、SEGY 数据加载、FD 系数计算及观测系统布设工具。
 * `src/ *[_cuda].jl`: 对应模块的 GPU/CUDA 加速实现  
+* `src/Elastic2D.jl`: 接口
+* `src/Elastic2D_cuda.jl`: CUDA接口
 
 * `homo_example.jl`: 运行示例
 * `SEAM_example.jl`: 运行示例

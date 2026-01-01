@@ -14,13 +14,8 @@
 import Pkg
 Pkg.activate(".")
 
-using Plots, Interpolations, Printf, Statistics
-
-# Include core components (CPU versions)
-include("src/Structures.jl")
-include("src/Kernels.jl")
-include("src/Utils.jl")
-include("src/Solver.jl")
+include("src/Elastic2D.jl")
+using .Elastic2D
 
 """
     run_seam_simulation()
@@ -93,17 +88,9 @@ function run_seam_simulation()
 
     # --- 5. EXECUTION ---
     @info "Starting CPU Numerical Simulation..."
-    @time solve_elastic!(wave, medium, habc, fd_a, geometry, dt, nt, M_order, vc)
+    @time solve_one_shot(wave, medium, habc, fd_a, geometry, dt, nt, M_order, vc;
+        i_src=1, output_shot_png=true, output_shot_bin=true)
 
-    # --- 6. POST-PROCESSING ---
-    @info "Simulation complete. Generating outputs..."
-
-    # Use the high-fidelity plotting function (Ensures no interpolation & correct axes)
-    save_shot_gather_raw(geometry.receivers.data, dt, "SEAM_shot_gather_cpu.png";
-        title="SEAM Shot Gather (CPU - Vz Component)")
-
-    # Export raw binary data for external processing (Python/C++)
-    save_shot_gather_bin(geometry.receivers.data, "SEAM_shot_gather_cpu.bin")
 end
 
 # Entry Point

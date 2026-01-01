@@ -1,13 +1,17 @@
+# ==============================================================================
 # src/Utils.jl
-#
+# 
 # Utility functions for grid setup, finite-difference coefficients, 
 # geometry deployment, and visualization.
+# ==============================================================================
 
 using Interpolations
 using SegyIO
 using Plots
 using GLMakie
 using Printf
+using Statistics
+using CairoMakie
 
 # ==============================================================================
 # 1. FINITE DIFFERENCE & BOUNDARY UTILS
@@ -38,7 +42,7 @@ end
     init_habc(nx, nz, nbc, dt, dx, dz, v_ref) -> HABCConfig
 
 Initializes the Higdon Absorbing Boundary Condition (HABC) configuration.
-Computes extrapolation coefficients and spatial blending weight matrices (w_vx, w_vz, w_tau).
+Computes extrapolation coefficients and spatial blending weight matrices.
 """
 function init_habc(nx, nz, nbc, dt, dx, dz, v_ref)
     rx, rz = v_ref * dt / dx, v_ref * dt / dz
@@ -74,49 +78,65 @@ Handles half-grid offsets for lam, mu, and rho matrices automatically.
 """
 function init_medium_from_data(dx, dz, dx_m, dz_m, vp_raw, vs_raw, rho_raw, nbc, M; free_surf=false)
     nx_m, nz_m = size(vp_raw)
-    nx_p = round(Int, (nx_m - 1) * dx_m / dx) + 1
-    nz_p = round(Int, (nz_m - 1) * dz_m / dz) + 1
+    x_max = (nx_m - 1) * dx_m
+    z_max = (nz_m - 1) * dz_m
+
+    nx_p = round(Int, x_max / dx) + 1
+    nz_p = round(Int, z_max / dz) + 1
     pad = nbc + M
 
-    # Grid for raw data
-    x_m = range(0, step=dx_m, length=nx_m)
-    z_m = range(0, step=dz_m, length=nz_m)
-
-    # Linear interpolators
-    itp_vp = interpolate((x_m, z_m), vp_raw, Gridded(Linear()))
-    itp_vs = interpolate((x_m, z_m), vs_raw, Gridded(Linear()))
-    itp_rho = interpolate((x_m, z_m), rho_raw, Gridded(Linear()))
+    @info "Padding (HABC + Stencil) = $pad"
 
     nx_total, nz_total = nx_p + 2 * pad, nz_p + 2 * pad
 
-    # Helper: physical coordinate mapping with edge clamping
-    function sample_phys(i, j, off_x, off_z)
-        px = (i - pad - 1 + off_x) * dx
-        pz = (j - pad - 1 + off_z) * dz
-        return clamp(px, 0.0, x_m[end]), clamp(pz, 0.0, z_m[end])
-    end
+    # 1. Setup Interpolators
+    x_m = range(0, step=dx_m, length=nx_m)
+    z_m = range(0, step=dz_m, length=nz_m)
 
-    # Staggered grid sampling
-    rho_vx = [Float32(itp_rho(sample_phys(i, j, 0.0, 0.0)...)) for i in 1:nx_total, j in 1:nz_total]
-    rho_vz = [Float32(itp_rho(sample_phys(i, j, 0.5, 0.5)...)) for i in 1:nx_total, j in 1:nz_total]
+    # Use Flat() extrapolation for stable boundary layers
+    itp_vp_ext = extrapolate(interpolate((x_m, z_m), vp_raw, Gridded(Linear())), Flat())
+    itp_vs_ext = extrapolate(interpolate((x_m, z_m), vs_raw, Gridded(Linear())), Flat())
+    itp_rho_ext = extrapolate(interpolate((x_m, z_m), rho_raw, Gridded(Linear())), Flat())
 
+    # 2. Allocate Arrays
+    rho_vx = zeros(Float32, nx_total, nz_total)
+    rho_vz = zeros(Float32, nx_total, nz_total)
     lam = zeros(Float32, nx_total, nz_total)
     mu_txx = zeros(Float32, nx_total, nz_total)
     mu_txz = zeros(Float32, nx_total, nz_total)
 
-    for j in 1:nz_total, i in 1:nx_total
-        # Txx/Tzz sampled at (0.5, 0.0) relative to Vx grid
-        px, pz = sample_phys(i, j, 0.5, 0.0)
-        rho_val = itp_rho(px, pz)
-        mu_txx[i, j] = rho_val * itp_vs(px, pz)^2
-        lam[i, j] = rho_val * (itp_vp(px, pz)^2 - 2 * itp_vs(px, pz)^2)
-
-        # Txz sampled at (0.0, 0.5)
-        px_xz, pz_xz = sample_phys(i, j, 0.0, 0.5)
-        mu_txz[i, j] = itp_rho(px_xz, pz_xz) * itp_vs(px_xz, pz_xz)^2
+    # Physical coordinate mapping
+    function sample_phys(i, j, off_x, off_z)
+        px = (i - pad - 1 + off_x) * dx
+        pz = (j - pad - 1 + off_z) * dz
+        return px, pz
     end
 
-    return Medium(nx_total, nz_total, nx_p, nz_p, Float32(dx), Float32(dz), pad, free_surf,
+    # 3. Sample and compute Elastic Parameters (Staggered Grid Logic)
+    for j in 1:nz_total, i in 1:nx_total
+        # vx location (0, 0)
+        px_vx, pz_vx = sample_phys(i, j, 0.0, 0.0)
+        rho_vx[i, j] = itp_rho_ext(px_vx, pz_vx)
+
+        # vz location (0.5, 0.5)
+        px_vz, pz_vz = sample_phys(i, j, 0.5, 0.5)
+        rho_vz[i, j] = itp_rho_ext(px_vz, pz_vz)
+
+        # txx/tzz location (0.5, 0.0)
+        px_t, pz_t = sample_phys(i, j, 0.5, 0.0)
+        vp_t = itp_vp_ext(px_t, pz_t)
+        vs_t = itp_vs_ext(px_t, pz_t)
+        rho_t = itp_rho_ext(px_t, pz_t)
+
+        lam[i, j] = Float32(rho_t * (vp_t^2 - 2 * vs_t^2))
+        mu_txx[i, j] = Float32(rho_t * vs_t^2)
+
+        # txz location (0.0, 0.5)
+        px_xz, pz_xz = sample_phys(i, j, 0.0, 0.5)
+        mu_txz[i, j] = Float32(itp_rho_ext(px_xz, pz_xz) * itp_vs_ext(px_xz, pz_xz)^2)
+    end
+
+    return Medium(nx_total, nz_total, nx_p, nz_p, Float32(dx), Float32(dz), M, pad, free_surf,
         rho_vx, rho_vz, lam, mu_txx, mu_txz)
 end
 
@@ -126,40 +146,47 @@ end
 
 """
     setup_sources(medium, x_srcs, z_srcs, wavelet, type="pressure")
-
-Converts physical source locations (meters) to grid indices.
-`off_x` and `off_z` account for staggered grid positioning.
+Converts physical source locations (meters) to grid indices with staggered offsets.
+    - type: "pressure" (default), "vz", "vx", "txx", "tzz", "txz"
+    - wavelet: Ricker wavelet or other time series
+    - Returns: Sources structure
 """
 function setup_sources(medium::Medium, x_srcs, z_srcs, wavelet, type="pressure")
     pad = medium.pad
-    off_x = (type == "pressure") ? 0.5f0 : 0.0f0
-    off_z = 0.0f0
-
-    sources = Source[]
-    for (xs, zs) in zip(x_srcs, z_srcs)
-        is = round(Int, xs / medium.dx + pad - off_x) + 1
-        js = round(Int, zs / medium.dz + pad - off_z) + 1
-        push!(sources, Source(is, js, type, wavelet))
+    if type == "pressure" || type == "txx" || type == "tzz"
+        off_x, off_z = 0.5f0, 0.0f0
+    elseif type == "vz"
+        off_x, off_z = 0.5f0, 0.5f0
+    elseif type == "txz"
+        off_x, off_z = 0.0f0, 0.5f0
+    else # vx
+        off_x, off_z = 0.0f0, 0.0f0
     end
-    return sources
+
+    indices_i = @. round(Int, x_srcs / medium.dx + pad - off_x) + 1
+    indices_j = @. round(Int, z_srcs / medium.dz + pad - off_z) + 1
+
+    @info "Source mapped to Grid Indices: I=$(indices_i), J=$(indices_j)"
+    return Sources(indices_i, indices_j, type, wavelet)
 end
 
 """
     setup_line_receivers(medium, x1, x2, dx_rec, z_rec, nt, type="vz")
-
 Deploys a horizontal line of receivers from x1 to x2 at depth z_rec.
 """
 function setup_line_receivers(medium::Medium, x1, x2, dx_rec, z_rec, nt, type="vz")
     pad = medium.pad
-    off_x = (type == "p" || type == "vz") ? 0.5f0 : 0.0f0
-    off_z = (type == "vz") ? 0.5f0 : 0.0f0
+    off_x = (type == "vz" || type == "txx" || type == "p") ? 0.5f0 : 0.0f0
+    off_z = (type == "vz" || type == "txz") ? 0.5f0 : 0.0f0
 
     x_phys = collect(x1:dx_rec:x2)
-    i_rec = [round(Int, xi / medium.dx + pad - off_x) + 1 for xi in x_phys]
-    j_rec = fill(round(Int, z_rec / medium.dz + pad - off_z) + 1, length(i_rec))
+    i_rec = [Int32(round(xi / medium.dx + pad - off_x) + 1) for xi in x_phys]
+    j_rec = fill(Int32(round(z_rec / medium.dz + pad - off_z) + 1), length(i_rec))
 
-    # Mask receivers falling outside the computational grid
-    mask = [(1 <= i_rec[k] <= medium.nx) && (1 <= j_rec[k] <= medium.nz) for k in 1:length(i_rec)]
+    # Boundary check for receivers
+    nx_f, nz_f = Int32(medium.nx), Int32(medium.nz)
+    mask = [(1 <= i_rec[k] <= nx_f) && (1 <= j_rec[k] <= nz_f) for k in 1:length(i_rec)]
+
     return Receivers(i_rec[mask], j_rec[mask], type, zeros(Float32, nt, sum(mask)))
 end
 
@@ -169,32 +196,30 @@ end
 
 """
     plot_model_setup(medium, geometry; savepath="model_setup.png")
-
-Plots the Vp model with Dash-line boundaries for the physical domain. 
-Displays sources (stars) and receivers (triangles).
+Plots the Vp model and overlays the source/receiver geometry for QC.
 """
 function plot_model_setup(medium::Medium, geometry::Geometry; savepath="model_setup.png")
     pad = medium.pad
-    # Vp estimate for QC plotting
+    # Approximate Vp for background plot
     vp = @. sqrt((medium.lam + 2 * medium.mu_txx) / medium.rho_vx)
 
-    p = Plots.heatmap(vp', color=:seismic, title="Simulation Setup",
-        xlabel="Grid X", ylabel="Grid Z", yflip=true,
+    p = Plots.heatmap(vp', color=:seismic, title="Model & Survey Setup",
+        xlabel="X Index", ylabel="Z Index", yflip=true,
         aspect_ratio=1, colorbar_title="Vp (m/s)")
 
-    # Box indicating the physical domain (excluding HABC padding)
+    # Box for physical domain
     Plots.plot!(p, [pad, medium.nx - pad, medium.nx - pad, pad, pad],
         [pad, pad, medium.nz - pad, medium.nz - pad, pad],
-        lw=1.5, ls=:dash, lc=:white, label="Interior")
+        lw=1.5, ls=:dash, lc=:white, label="Physical Domain")
 
     # Overlay sensors
     Plots.scatter!(p, geometry.receivers.i, geometry.receivers.j,
-        markershape=:dtriangle, markersize=2, markercolor=:blue, label="Rec")
+        markershape=:dtriangle, markersize=2, markercolor=:blue, label="Receivers")
 
     src_i = [s.i for s in geometry.sources]
     src_j = [s.j for s in geometry.sources]
     Plots.scatter!(p, src_i, src_j,
-        markershape=:star5, markersize=6, markercolor=:red, label="Src")
+        markershape=:star5, markersize=6, markercolor=:red, label="Sources")
 
     Plots.savefig(p, savepath)
     return p
@@ -202,41 +227,32 @@ end
 
 """
     generate_mp4_from_buffer(buffer, vc, dt, save_gap)
-
-Exports an MP4 video from a 3D wavefield buffer using Makie.
-Includes dynamic scaling and a real-time timestamp in the title.
+Exports an MP4 video from a 3D wavefield buffer using GLMakie.
 """
 function generate_mp4_from_buffer(buffer, vc, dt, save_gap)
     nx_s, nz_s, n_frames = size(buffer)
-    fig = Figure(size=(nx_s * 2, nz_s * 2))
+    fig = Makie.Figure(size=(800, round(Int, 800 * nz_s / nx_s)))
+
+    rms = sqrt(mean(buffer .^ 2))
+    clip_val = 2.0f0 * rms
 
     frame_obs = Observable(buffer[:, :, 1])
-    crange_obs = Observable((-0.1, 0.1))
-    title_obs = Observable("Wave Propagation | Time: 0.0000s")
+    title_obs = Observable("Time: 0.0000 s")
 
-    ax = Axis(fig[1, 1], title=title_obs, titlesize=24, yreversed=true)
-    Makie.heatmap!(ax, frame_obs, colorrange=crange_obs, colormap=:seismic)
-    Colorbar(fig[1, 2], colorrange=crange_obs, colormap=:seismic)
+    ax = Axis(fig[1, 1], title=title_obs, aspect=DataAspect(), yreversed=true)
+    hm = Makie.heatmap!(ax, frame_obs, colormap=:balance, colorrange=(-clip_val, clip_val))
+    Makie.Colorbar(fig[1, 2], hm)
 
-    @info "Exporting video: $(vc.filename)..."
     Makie.record(fig, vc.filename, 1:n_frames; framerate=vc.fps) do i
-        current_frame = buffer[:, :, i]
-        frame_obs[] = current_frame
-
-        # Dynamic Gain adjustment
-        max_val = maximum(abs.(current_frame))
-        if max_val > 1e-10
-            crange_obs[] = (-max_val, max_val)
-        end
-
-        current_time = (i - 1) * dt * save_gap
-        title_obs[] = @sprintf("Wave Propagation | Time: %.4fs", current_time)
+        frame_obs[] = buffer[:, :, i]
+        title_obs[] = @sprintf("Time: %.4f s", (i - 1) * dt * save_gap)
     end
+    @info "Video saved: $(vc.filename)"
 end
 
 """
     load_segy_model(path) -> Matrix{Float32}
-Utility to read standard SEG-Y files and extract the data matrix.
+Reads a SEG-Y file and returns the data as a Float32 matrix.
 """
 function load_segy_model(path)
     !isfile(path) && error("SEGY file not found at: $path")
@@ -246,76 +262,41 @@ end
 
 """
     save_shot_gather_raw(rec_data_gpu, dt, filename="shot_gather_raw.png")
-
-以原始分辨率保存炮集，不进行时间维度的降采样，并关闭绘图插值以保持数据真实度。
+Saves the recorded shot gather as a high-fidelity PNG without interpolation.
 """
-function save_shot_gather_raw(rec_data_gpu, dt, filename="shot_gather_raw.png"; title="Raw Shot Gather")
-    @info "Syncing raw receiver data for high-fidelity plotting..."
+function save_shot_gather_png(data_cpu, dt, filename)
+    # 1. 计算全局 RMS (模仿你原来的 generate_mp4_from_buffer)
+    rms = sqrt(sum(data_cpu .^ 2) / length(data_cpu))
 
-    # 1. 搬回 CPU
-    data_cpu = Array(rec_data_gpu)
+    # 你原来的 clip_val 是 2.0 * rms
+    v_limit = 2.0f0 * rms
+
+    # 2. 绘图
     nt, n_rec = size(data_cpu)
+    t_plot = (0:nt-1) .* dt
 
-    # 计算完整的物理时间轴，确保不漏掉任何点
-    t_full = (0:nt-1) .* dt
+    fig = CairoMakie.Figure(size=(1000, 1200))
+    ax = CairoMakie.Axis(fig[1, 1], title="Fixed Color Range", yreversed=true)
 
-    # 2. 创建画布 - 增加分辨率 (px) 以匹配原始数据量
-    # 如果 nt 很大，建议增加 figure 的高度
-    fig = Figure(size=(1000, 1200), fontsize=20)
+    # 注意：如果 nt > 5000，这里必须降采样，否则 CairoMakie 还是会 OOM
+    stride = max(1, nt ÷ 3000)
 
-    ax = Axis(fig[1, 1],
-        title=title,
-        xlabel="Receiver Index",
-        ylabel="Time (s)",
-        xaxisposition=:top,
-        yreversed=true)
-
-    # 3. AGC 缩放
-    v_limit = quantile(vec(abs.(data_cpu)), 0.98)
-
-    # 4. 核心绘图：关闭插值 (interpolate = false)
-    # 这样每一个采样点都会渲染成一个清晰的像素方块，而不是模糊的渐变
-    hm = Makie.heatmap!(ax, 1:n_rec, t_full, data_cpu',
+    hm = CairoMakie.heatmap!(ax, 1:n_rec, t_plot[1:stride:end], data_cpu[1:stride:end, :]',
         colormap=:seismic,
-        colorrange=(-v_limit, v_limit),
-        interpolate=false) # <--- 关键：禁止插值，保持原始数据颗粒感
+        colorrange=(-v_limit, v_limit))
 
-    Colorbar(fig[1, 2], hm, label="Amplitude", width=15)
-
-    # 5. 高 DPI 保存
-    save_path = joinpath(pwd(), filename)
-    save(save_path, fig, px_per_unit=2) # <--- 增加像素密度
-
-    @info "High-fidelity shot gather saved: $save_path"
+    save(filename, fig)
 end
 
 """
     save_shot_gather_bin(rec_data_gpu, filename="shot_gather.bin")
-
-将接收器数据导出为标准的 Float32 纯二进制文件。
-会打印出矩阵维度，方便后续加载（如 Python 的 np.fromfile）。
+Exports receiver data to a raw Float32 binary file.
 """
 function save_shot_gather_bin(rec_data_gpu, filename="shot_gather.bin")
-    # 1. 搬回 CPU
     data_cpu = Array(rec_data_gpu)
     nt, n_rec = size(data_cpu)
-
-    # 2. 写入文件
     open(filename, "w") do io
         write(io, data_cpu)
     end
-
-    # 3. 打印元数据 (Metadata)
-    println("\n" * "="^40)
-    println("BINARY EXPORT COMPLETE")
-    println("-"^40)
-    println("Filename:  $filename")
-    println("Dimensions: [nt: $nt, n_rec: $n_rec]")
-    println("Total Elements: $(nt * n_rec)")
-    println("Format:    Float32 (Little-endian)")
-    println("Size:      $(round(filesize(filename) / 1024^2, digits=2)) MB")
-    println("-"^40)
-    println("Python Load Tip:")
-    println("  data = np.fromfile('$filename', dtype=np.float32).reshape($nt, $n_rec)")
-    println("="^40 * "\n")
+    @info "Binary export complete: $filename ($nt x $n_rec)"
 end

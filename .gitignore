@@ -5,17 +5,16 @@ Manifest.toml
 /scratch/
 
 # Data and Models (Very Important!)
-model/*.sgy
-model/*.bin
-*.seam
-*.segy
+
+
 
 # Outputs and Plots
 *.gif
 *.png
 *.jpg
 *.mp4
-results/
+*.bin
+
 
 # System files
 .DS_Store

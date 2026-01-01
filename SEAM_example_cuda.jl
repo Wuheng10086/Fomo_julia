@@ -1,124 +1,116 @@
+# ==============================================================================
 # SEAM_example_cuda.jl
 # 
-# Example Script: GPU-Accelerated 2D Elastic Wave Simulation 
+# Example Script: GPU-Accelerated 2D Elastic Wave Simulation
 # Project: Wavefield.jl - SEAM Phase I Model Execution
 # ==============================================================================
-# Workflow:
-# 1. Initialize environment and load industrial SEAM models (Vp, Vs, Rho).
-# 2. Pre-process geometry and grid settings on Host (CPU).
-# 3. Migrate all data structures to Device (NVIDIA VRAM) via CuArrays.
-# 4. Execute high-order FD kernels on CUDA with HABC.
-# 5. Retrieve shot gathers and generate high-fidelity visualization.
-# ==============================================================================
 
-using CUDA, Plots, Printf, Statistics
-using GLMakie
 import Pkg
-
-# Ensure environment is active
 Pkg.activate(".")
 
-include("src/Structures.jl")
-include("src/Structures_cuda.jl")
-include("src/Kernels_cuda.jl")
-include("src/Utils.jl")
-include("src/Solver_cuda.jl")
+include("src/Elastic2D_cuda.jl")
+using .Elastic2D_cuda
 
 """
     run_seam_gpu_simulation()
-
-Main execution function for the SEAM model simulation.
+Entry point for the SEAM model simulation. Handles data loading, GPU 
+initialization, kernel execution, and results export.
 """
 function run_seam_gpu_simulation()
     # --- 1. DATA LOADING & PRE-PROCESSING (Host) ---
-    @info "Loading SEAM model data (CPU)..."
-    # Load SEG-Y files (assuming standard SEAM Phase I files)
+    @info "Loading SEAM model data (SEG-Y format)..."
+
+    # Load raw SEG-Y models (Vp, Vs, Density)
+    # Note: We transpose (') to ensure data layout matches our grid conventions
     Vp_raw = load_segy_model("./model/SEAM_Vp_Elastic_N23900.sgy")'
     Vs_raw = load_segy_model("./model/SEAM_Vs_Elastic_N23900.sgy")'
     Rho_raw = load_segy_model("./model/SEAM_Den_Elastic_N23900.sgy")'
 
-    # Quick orientation check (Ensure j=1 is the top/surface)
-    @info "Saving Vp model check plot..."
-    p_check = Plots.heatmap(Vp_raw', yflip=true, color=:viridis,
-        title="Vp Orientation Check (Top=Surface)", xlabel="X Index", ylabel="Z Index")
-    Plots.savefig(p_check, "Vp_Model_Check.png")
+    # Model parameters
+    dx_m, dz_m = 12.5f0, 12.5f0      # Input SEG-Y spacing (m)
+    dx, dz = 5f0, 5f0        # Target computational spacing (m)
+    nbc = 50                  # Boundary width (points)
+    M_order = 4                   # FD half-order (e.g., 4 means 8th order)
+    total_time = 8.0f0               # Simulation duration (s)
 
-    # Simulation Parameters
-    dx, dz = 5.0f0, 5.0f0            # Computational grid spacing (m)
-    dx_m, dz_m = 12.5f0, 12.5f0      # Original SEG-Y model spacing (m)
-    nbc = 40                         # HABC boundary width
-    M_order = 4                      # FD order (8th order spatial)
-    total_time = 4.0f0               # Total recording time (s)
-
-    # Stability Analysis (CFL Condition)
+    # CFL Stability Analysis
     v_max = maximum(Vp_raw)
-    dt = Float32(0.5 * dx / (v_max * 1.5))
+    dt = Float32(0.5 * dx / (v_max * 1.2)) # Safety factor of 1.2
     nt = ceil(Int, total_time / dt)
-    @info "Simulation setup: $nt steps, dt = $(round(dt, digits=6))s"
+    @info "Stability: dt=$(round(dt, digits=6))s, Total Steps=$nt"
 
-    # --- 2. GPU MEMORY MIGRATION ---
-    @info "Migrating model and parameters to GPU VRAM..."
-    # Interpolate and pad model to the computational grid
+    # --- 2. GPU DATA PREPARATION ---
+    @info "Preparing computational grid and migrating to VRAM..."
+
+    # Initialize CPU Medium (interpolates model and prepares staggered grid buoyancy)
     medium_cpu = init_medium_from_data(dx, dz, dx_m, dz_m, Vp_raw, Vs_raw, Rho_raw, nbc, M_order; free_surf=true)
-    medium_gpu = to_gpu(medium_cpu)
+    @info "Computational Grid: $(medium_cpu.nx) x $(medium_cpu.nz) (including padding)"
 
-    # High-order FD coefficients to GPU
+    # Migration: CPU -> GPU
+    medium_gpu = to_gpu(medium_cpu)
     a_gpu = CuArray(get_fd_coefficients(M_order))
 
-    # Pre-allocate Wavefield on GPU
+    # Initialize Wavefields on GPU (Full Zero Initialization)
     nx, nz = medium_gpu.nx, medium_gpu.nz
     wavefield_gpu = WavefieldGPU(
         CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), # vx, vz
         CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), # stresses
-        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), # vx_old, vz_old
-        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz)  # stress_old
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), # backup for HABC
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz)
     )
 
     # --- 3. BOUNDARY & GEOMETRY SETUP ---
-    v_ref = (minimum(Vp_raw) + maximum(Vp_raw)) / 2.0f0
+    # Setup HABC config (Uses average velocity for characteristic impedance)
+    v_ref = Float32(mean(Vp_raw))
     habc_gpu = to_gpu(init_habc(nx, nz, nbc, dt, dx, dz, v_ref))
 
-    # Source: 25Hz Ricker Wavelet
+    # Create 25Hz Ricker wavelet
     f0 = 25.0f0
     t_vec = (0:nt-1) .* dt
     t0 = 1.5f0 / f0
     wavelet = @. (1 - 2 * (pi * f0 * (t_vec - t0))^2) * exp(-(pi * f0 * (t_vec - t0))^2)
 
-    # Survey Design: Center Shot, Surface Line Receivers
-    x_src = [(medium_gpu.nx_p * dx) / 2.0]
-    z_src = [10.0] # 10m depth
-    sources = setup_sources(medium_cpu, x_src, z_src, wavelet, "pressure")
+    # Source: Single point shot in the center
+    x_srcs = [(medium_cpu.nx_p * dx) / 2.0]
+    z_srcs = [10.0] # 10m depth
+    sources = setup_sources(medium_cpu, x_srcs, z_srcs, wavelet, "pressure")
 
-    x_rec_start, x_rec_end = 0.0, medium_gpu.nx_p * dx
-    receivers = setup_line_receivers(medium_cpu, x_rec_start, x_rec_end, 10.0, 5.0, nt, "vz")
+    # Receivers: Surface line across the entire model
+    x_rec_start = 50.0
+    x_rec_end = (medium_cpu.nx_p - 1) * dx - 50.0
+    receivers = setup_line_receivers(medium_cpu, x_rec_start, x_rec_end, 1.0, 1.0, nt, "vz")
 
-    # Migrate Geometry to Device
+    # Migrate Geometry (including empty data buffer) to GPU
     geometry_gpu = to_gpu(Geometry(sources, receivers), nt)
 
-    # --- 4. LAUNCH CUDA SOLVER ---
-    @info "Starting CUDA Solver on $(CUDA.name(CUDA.device()))..."
+    # --- 4. SOLVER EXECUTION ---
+    @info "Launching Solver on $(CUDA.name(CUDA.device()))..."
 
-    # Optional Video Config (Downsample factor 4, save every 50 steps)
-    vc = VideoConfig(50, 4, 0.05f0, :p, "seam_p_wave_propagation.mp4", 30)
+    # Visualization config: Downsample spatial x4, temporal x50
+    vc = VideoConfig(50, 4, 0.05f0, :vel, "SEAM_Vel_Wavefield3.mp4", 180)
 
     CUDA.@time solve_elastic_cuda!(
         wavefield_gpu, medium_gpu, habc_gpu, a_gpu,
         geometry_gpu, dt, nt, M_order, vc
     )
 
-    # --- 5. POST-PROCESSING & ANALYTICS ---
-    # 1. 保存高清图片 (无降采样，无插值)
-    save_shot_gather_raw(geometry_gpu.receivers.data, dt, "SEAM_Vz_Raw.png")
+    # --- 5. EXPORT & DATA RETRIEVAL ---
+    @info "Retrieving shot gathers and saving results..."
 
-    # 2. 保存二进制文件供后续处理
-    save_shot_gather_bin(geometry_gpu.receivers.data, "SEAM_Vz_Raw.bin")
+    # Extract data from GPU (handled by utils or direct Array conversion)
+    shot_gather = Array(geometry_gpu.receivers.data)
+
+    save_shot_gather_bin(shot_gather, "SEAM_Vz_Gather.bin")
+    save_shot_gather_png(shot_gather, dt, "SEAM_Vz_Gather.png")
+
+    @info "Simulation complete. Results saved to local directory."
 end
 
-# Script Execution Entry
+# Main entry check
 if abspath(PROGRAM_FILE) == @__FILE__
     if CUDA.functional()
         run_seam_gpu_simulation()
     else
-        @error "CUDA.jl could not find a functional NVIDIA GPU."
+        @error "No functional NVIDIA GPU detected. Please check your CUDA drivers."
     end
 end

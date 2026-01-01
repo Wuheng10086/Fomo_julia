@@ -2,6 +2,8 @@
 
 [中文文档](README_zh.md) || [English](README.md)  
 
+**Still in development**
+
 **Fomo_julia** is a high-performance 2D isotropic elastic wave numerical simulator developed in Julia. It employs a high-order staggered-grid finite-difference (SGFD) scheme combined with an advanced Hybrid Absorbing Boundary Condition (HABC). It provides a user-friendly interface for survey geometry setup, aiming to be an efficient and accessible tool for seismic wavefield modeling (forward modeling).
 
 ![Simulation Example](homogeneous_test.gif)
@@ -46,7 +48,7 @@ Time steps: $steps = 11520$
 <img src="SEAM_setup_check.png" style="width:70%;" alt="SEAM Vp & Geometry">  
 *Vp model and survey geometry setup*
 
-<img src="SEAM_Vz_Raw.png" style="width:70%;" alt="Shot Gather">  
+<img src="SEAM_Vz_Gather.png" style="width:70%;" alt="Shot Gather">  
 
 *Simulated shot gather*
 
@@ -100,7 +102,14 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 * `src/Structures.jl`: Core data structure definitions (includes Medium properties, Wavefield variables, and Survey Geometry).
 * `src/Kernels.jl`: Implementation of high-order finite-difference operators and HABC core logic (the computational heart of the solver).
 * `src/Solver.jl`: Manages time-stepping scheduling, source injection, and data recording.
-* `src/Utils.jl`: Includes grid interpolation, SEG-Y data loading, FD coefficient calculation, and survey setup tools.
+* `src/Utils.jl`: Includes grid interpolation, SEG-Y data loading, FD coefficient calculation, and survey setup tools.  
+* `src/ *[_cuda].jl`: GPU/CUDA accelerated implementations for the corresponding modules.
+* `src/Elastic2D.jl`: CPU Interface
+* `src/Elastic2D_cuda.jl`: CUDA Interface
+
+* `homo_example.jl`: Homogeneous medium example
+* `SEAM_example.jl`: SEAM model example (CPU)
+* `SEAM_example_cuda.jl`: SEAM model example (CUDA)
 
 ## 🤝 Contributing & Feedback
 
