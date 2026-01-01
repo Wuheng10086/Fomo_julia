@@ -10,9 +10,15 @@
   <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
 </p>
 
+
+https://github.com/user-attachments/assets/997ec81f-2bd0-4666-b3af-a1a02f37177f
+
+
 <p align="center">
   <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
 </p>
+
+
 
 ## ✨ Core Features
 
