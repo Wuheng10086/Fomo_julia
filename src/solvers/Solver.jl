@@ -1,4 +1,10 @@
 # src/Solver.jl
+# 
+# CPU Solver for 2D Elastic Wave Equation (Staggered Grid)
+# 
+# This file implements the main CPU-based solver for elastic wave propagation,
+# including time-stepping algorithms, boundary conditions, source injection,
+# receiver recording, and optional real-time visualization.
 
 using Printf, Dates
 using GLMakie
@@ -11,17 +17,18 @@ using ProgressMeter
 """
     solve_elastic!(W, M, H, a, G, dt, nt, M_order, vc=nothing)
 
-High-performance 2D Elastic Wave Equation solver with real-time rendering using GLMakie.
+High-performance 2D Elastic Wave Equation solver with optional real-time rendering using GLMakie.
 
 # Arguments
-- `W`: Wavefield struct (contains current and old states of vx, vz, stresses).
-- `M`: Medium struct (contains physical properties: rho, lambda, mu).
-- `H`: HABCConfig (Higdon Absorbing Boundary Condition parameters).
+- `W::Wavefield`: Wavefield struct (contains current and old states of vx, vz, stresses).
+- `M::Medium`: Medium struct (contains physical properties: rho, lambda, mu).
+- `H::HABCConfig`: HABC (Higdon Absorbing Boundary Condition) parameters.
 - `a`: Finite difference coefficients.
-- `G`: Geometry struct (Source and Receiver locations).
-- `dt`, `nt`: Time step size and total number of steps.
+- `G::Geometry`: Geometry struct (Source and Receiver locations).
+- `dt`: Time step size.
+- `nt`: Total number of time steps.
 - `M_order`: Half-stencil length for finite difference.
-- `vc`: VideoConfig struct (optional). If provided, triggers real-time visualization and video export.
+- `vc::Union{VideoConfig,Nothing}`: VideoConfig struct (optional). If provided, triggers real-time visualization and video export.
 
 # Features
 - **Staggered-Grid FD**: High-order spatial discretization.
@@ -86,7 +93,7 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
                     W.txx[si, sj] += wav
                     W.tzz[si, sj] += wav
                 elseif src.type == "force_z"
-                    # 注意：这里假设所有震源共享同一个 rho 分量
+                    # Note: This assumes all sources share the same rho component
                     W.vz[si, sj] += wav * (dt_f32 / M.rho_vz[si, sj])
                 elseif src.type == "force_x"
                     W.vx[si, sj] += wav * (dt_f32 / M.rho_vx[si, sj])
@@ -174,8 +181,26 @@ function solve_elastic!(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, 
     end
 end
 
+"""
+    solve_one_shot(W, M, H, a, G, dt, nt, M_order, output_shot_path; vc=nothing, i_src=nothing, output_shot_png=true, output_shot_bin=true)
+
+Solves a single seismic shot using the elastic wave solver.
+
+# Arguments
+- `W`: Wavefield struct
+- `M`: Medium struct
+- `H`: HABC configuration
+- `a`: FD coefficients
+- `G`: Geometry (sources and receivers)
+- `dt`, `nt`: Time step and number of steps
+- `M_order`: FD order
+- `output_shot_path`: Path for output files
+- `vc`: Video config (optional)
+- `i_src`: Source index (for multi-source geometry)
+- `output_shot_png`, `output_shot_bin`: Output format flags
+"""
 function solve_one_shot(W, M, H, a, G, dt, nt, M_order, output_shot_path; vc=nothing, i_src=nothing, output_shot_png=true, output_shot_bin=true)
-    n_sources = length(G.sources)
+    n_sources = length(G.sources.i)
 
     if n_sources == 0
         error("No sources defined in the geometry.")
@@ -187,7 +212,7 @@ function solve_one_shot(W, M, H, a, G, dt, nt, M_order, output_shot_path; vc=not
 
     idx = (n_sources == 1) ? 1 : i_src
 
-    # 在 solve_one_shot 内部
+    # Create single-source geometry
     single_src = Sources([G.sources.i[idx]], [G.sources.j[idx]], G.sources.type, G.sources.wavelet)
     G_isrc = Geometry(single_src, G.receivers)
 
@@ -195,21 +220,40 @@ function solve_one_shot(W, M, H, a, G, dt, nt, M_order, output_shot_path; vc=not
 
     rec_type = G.receivers.type
     if output_shot_png
-        save_shot_gather_raw(G.receivers.data, dt, "shot$i_src-$rec_type.png";
-            title="Shot Gather $rec_type")
+        save_shot_gather_raw(G.receivers.data, dt, "$(output_shot_path)shot$(i_src)-$(rec_type).png";
+            title="Shot Gather $(rec_type)")
     end
     if output_shot_bin
-        save_shot_gather_bin(G.receivers.data, "shot$i_src-$rec_type.bin")
+        save_shot_gather_bin(G.receivers.data, "$(output_shot_path)shot$(i_src)-$(rec_type).bin")
     end
-
 end
 
+"""
+    run_multi_shots(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, dt, nt, M_order, output_shot_path;
+        vc::Union{VideoConfig,Nothing}=nothing,
+        output_shot_png::Bool=false,
+        output_shot_bin::Bool=true)
+
+Run multiple seismic shots sequentially.
+
+# Arguments
+- `W`: Wavefield struct
+- `M`: Medium struct
+- `H`: HABC configuration
+- `a`: FD coefficients
+- `G`: Multi-source geometry
+- `dt`, `nt`: Time step and number of steps
+- `M_order`: FD order
+- `output_shot_path`: Path for output files
+- `vc`: Video config (optional)
+- `output_shot_png`, `output_shot_bin`: Output format flags
+"""
 function run_multi_shots(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry, dt, nt, M_order, output_shot_path;
     vc::Union{VideoConfig,Nothing}=nothing,
     output_shot_png::Bool=false,
     output_shot_bin::Bool=true)
 
-    n_sources = length(G.sources)
+    n_sources = length(G.sources.i)
 
     if n_sources == 0
         error("No sources defined in the geometry.")
@@ -231,13 +275,26 @@ function run_multi_shots(W::Wavefield, M::Medium, H::HABCConfig, a, G::Geometry,
     println("\nAll shots completed successfully.")
 end
 
+"""
+    reset_wavefield!(W::Wavefield)
 
+Reset all wavefield components to zero.
+
+# Arguments
+- `W::Wavefield`: Wavefield to reset
+"""
 function reset_wavefield!(W::Wavefield)
-    # 假设你的 Wavefield 结构体里有这些 CuArray 或 Array
+    # Reset all wavefield components to zero
     W.vx .= 0f0
     W.vz .= 0f0
     W.txx .= 0f0
     W.tzz .= 0f0
     W.txz .= 0f0
-    # 如果有辅助波场也要清零
+    
+    # Also reset old fields
+    W.vx_old .= 0f0
+    W.vz_old .= 0f0
+    W.txx_old .= 0f0
+    W.tzz_old .= 0f0
+    W.txz_old .= 0f0
 end

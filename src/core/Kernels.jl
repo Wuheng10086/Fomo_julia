@@ -22,6 +22,8 @@ Optimized via `@tturbo` for multi-threaded SIMD execution.
 - `txx`, `tzz`, `txz`: Stress tensor components.
 - `rho_vx`, `rho_vz`: Buoyancy (1/density) sampled at vx and vz locations.
 - `a`: Finite difference coefficients for the staggered stencil.
+- `nx`, `nz`: Grid dimensions.
+- `dtx`, `dtz`: Time-step scaled spatial derivatives.
 - `M_order`: Half-stencil length (e.g., 4 for 8th order).
 """
 function update_v_core!(vx, vz, txx, tzz, txz, rho_vx, rho_vz, a, nx, nz, dtx, dtz, M_order)
@@ -53,6 +55,16 @@ end
     update_t_core!(txx, tzz, txz, vx, vz, lam, mu_txx, mu_txz, a, nx, nz, dtx, dtz, M_order)
 
 Update stress components (txx, tzz, txz) using Hooke's Law on the staggered grid.
+
+# Arguments
+- `txx`, `tzz`, `txz`: Stress arrays to be updated.
+- `vx`, `vz`: Velocity components.
+- `lam`: Lame parameter lambda.
+- `mu_txx`, `mu_txz`: Lame parameter mu at different staggered locations.
+- `a`: Finite difference coefficients.
+- `nx`, `nz`: Grid dimensions.
+- `dtx`, `dtz`: Time-step scaled spatial derivatives.
+- `M_order`: Half-stencil length.
 """
 function update_t_core!(txx, tzz, txz, vx, vz, lam, mu_txx, mu_txz, a, nx, nz, dtx, dtz, M_order)
     @tturbo for j in (M_order+1):(nz-M_order)
@@ -90,6 +102,14 @@ end
 Apply Higdon Absorbing Boundary Conditions (HABC) to field `f`.
 Regions are split into 8 mutually exclusive blocks (4 edges, 4 corners) 
 to maximize SIMD efficiency by avoiding `if` branches inside loops.
+
+# Arguments
+- `f`: Field to apply HABC to (velocity or stress component).
+- `f_old`: Field values at the previous time step.
+- `H`: HABC configuration parameters.
+- `weights`: Spatial blending weights for HABC.
+- `nx`, `nz`: Grid dimensions.
+- `is_free_surface`: Flag indicating if top boundary is free surface.
 """
 function apply_habc!(f, f_old, H, weights, nx, nz, is_free_surface)
     nbc = H.nbc
@@ -166,6 +186,13 @@ end
 
 Backup boundary field values into `f_old` for HABC extrapolation.
 Optimized for column-major memory access to minimize cache misses.
+
+# Arguments
+- `old`: Destination array for boundary values.
+- `new`: Source array containing current field values.
+- `nbc`: Number of boundary layers.
+- `nx`, `nz`: Grid dimensions.
+- `is_free_surface`: Flag indicating if top boundary is free surface.
 """
 function copy_boundary_strip!(old, new, nbc, nx, nz, is_free_surface)
     j_top = is_free_surface ? nbc + 1 : 1

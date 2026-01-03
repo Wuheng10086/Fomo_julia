@@ -1,8 +1,37 @@
 # ==============================================================================
 # Solver_cuda.jl
+# 
+# GPU Solver for 2D Elastic Wave Equation (Staggered Grid)
+# 
+# This file implements the main CUDA-based solver for elastic wave propagation,
+# including GPU memory management, kernel launches, and multi-shot processing.
 # ==============================================================================
+
 using ProgressMeter, CUDA, CairoMakie, Printf
 
+"""
+    solve_elastic_cuda!(W::WavefieldGPU, M::MediumGPU, H::HABCConfigGPU, a_gpu, G::GeometryGPU, dt, nt, M_order, vc=nothing)
+
+High-performance GPU-based 2D Elastic Wave Equation solver with optional video export.
+
+# Arguments
+- `W::WavefieldGPU`: GPU wavefield struct (contains current and old states of vx, vz, stresses).
+- `M::MediumGPU`: GPU medium struct (contains physical properties: rho, lambda, mu).
+- `H::HABCConfigGPU`: GPU HABC (Higdon Absorbing Boundary Condition) parameters.
+- `a_gpu`: GPU finite difference coefficients.
+- `G::GeometryGPU`: GPU geometry struct (Source and Receiver locations).
+- `dt`: Time step size.
+- `nt`: Total number of time steps.
+- `M_order`: Half-stencil length for finite difference.
+- `vc::Union{VideoConfig,Nothing}`: VideoConfig struct (optional). If provided, triggers video export.
+
+# Features
+- **CUDA Acceleration**: Full GPU implementation for high-performance computing.
+- **HABC**: Higdon absorbing boundaries for minimal reflections.
+- **Free Surface**: Stress-free boundary condition at the top.
+- **Video Export**: Optional video export using CairoMakie.
+- **Progress Tracking**: Real-time status via ProgressMeter.
+"""
 function solve_elastic_cuda!(
     W::WavefieldGPU, M::MediumGPU, H::HABCConfigGPU, a_gpu, G::GeometryGPU,
     dt, nt, M_order, vc::Union{VideoConfig,Nothing}=nothing
@@ -38,7 +67,7 @@ function solve_elastic_cuda!(
             nx, nz, H.nbc, M.is_free_surface
         )
 
-        # 2. Source
+        # 2. Source Injection
         @cuda threads = 1 blocks = 1 inject_source_kernel!(W.txx, W.tzz, G.sources.wavelet, G.sources.i0[1], G.sources.j0[1], k)
 
         # 3. Update V & HABC
@@ -81,6 +110,17 @@ function solve_elastic_cuda!(
 end
 
 # --- HABC Helpers ---
+"""
+    apply_habc_v_all!(W, H, nx, nz, fs)
+
+Apply HABC to all velocity components (vx and vz).
+
+# Arguments
+- `W`: Wavefield with velocity components
+- `H`: HABC configuration
+- `nx`, `nz`: Grid dimensions
+- `fs`: Free surface flag
+"""
 function apply_habc_v_all!(W, H, nx, nz, fs)
     for (f, f_o, w) in [(W.vx, W.vx_old, H.w_vx), (W.vz, W.vz_old, H.w_vz)]
         apply_habc_left!(f, f_o, H, w, nx, nz)
@@ -90,6 +130,17 @@ function apply_habc_v_all!(W, H, nx, nz, fs)
     end
 end
 
+"""
+    apply_habc_t_all!(W, H, nx, nz, fs)
+
+Apply HABC to all stress components (txx, tzz, txz).
+
+# Arguments
+- `W`: Wavefield with stress components
+- `H`: HABC configuration
+- `nx`, `nz`: Grid dimensions
+- `fs`: Free surface flag
+"""
 function apply_habc_t_all!(W, H, nx, nz, fs)
     for (f, f_o) in [(W.txx, W.txx_old), (W.tzz, W.tzz_old), (W.txz, W.txz_old)]
         apply_habc_left!(f, f_o, H, H.w_tau, nx, nz)
@@ -108,6 +159,9 @@ end
 
 Resets all GPU wavefield buffers to zero. Crucial for clearing energy 
 from the previous shot before starting a new simulation.
+
+# Arguments
+- `W::WavefieldGPU`: GPU wavefield to reset
 """
 function reset_wavefield_cuda!(W)
     # Using fill! on CuArrays is an asynchronous, high-performance operation
@@ -131,6 +185,10 @@ end
 
 Helper to isolate a single source from a multi-source GeometryGPU object.
 This allows the solver to focus on one source at a time during iteration.
+
+# Arguments
+- `G::GeometryGPU`: GPU geometry with multiple sources
+- `idx::Int`: Index of the source to extract
 """
 function subset_geometry_cuda(G::GeometryGPU, idx::Int)
     # Create a single-element slice of the source arrays
@@ -145,9 +203,23 @@ function subset_geometry_cuda(G::GeometryGPU, idx::Int)
 end
 
 """
-    solve_one_shot_cuda(...)
+    solve_one_shot_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_path; vc=nothing,
+        i_src=nothing, output_shot_png=true, output_shot_bin=true)
 
 Simulates a single shot on the GPU, then transfers results to CPU for storage.
+
+# Arguments
+- `W`: GPU wavefield
+- `M`: GPU medium
+- `H`: GPU HABC configuration
+- `a_gpu`: GPU FD coefficients
+- `G`: GPU geometry
+- `dt`, `nt`: Time step and number of steps
+- `M_order`: FD order
+- `output_shot_path`: Path for output files
+- `vc`: Video config (optional)
+- `i_src`: Source index (for multi-source geometry)
+- `output_shot_png`, `output_shot_bin`: Output format flags
 """
 function solve_one_shot_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_path; vc=nothing,
     i_src=nothing, output_shot_png=true, output_shot_bin=true)
@@ -180,10 +252,25 @@ function solve_one_shot_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_pat
 end
 
 """
-    run_multi_shots_cuda(...)
+    run_multi_shots_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_path;
+        vc::Union{VideoConfig,Nothing}=nothing,
+        output_shot_png::Bool=false,
+        output_shot_bin::Bool=true)
 
 The main loop for production runs. Iterates through all sources, 
 running a clean simulation for each.
+
+# Arguments
+- `W`: GPU wavefield
+- `M`: GPU medium
+- `H`: GPU HABC configuration
+- `a_gpu`: GPU FD coefficients
+- `G`: GPU geometry with multiple sources
+- `dt`, `nt`: Time step and number of steps
+- `M_order`: FD order
+- `output_shot_path`: Path for output files
+- `vc`: Video config (optional)
+- `output_shot_png`, `output_shot_bin`: Output format flags
 """
 function run_multi_shots_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_path;
     vc::Union{VideoConfig,Nothing}=nothing,
@@ -194,7 +281,6 @@ function run_multi_shots_cuda(W, M, H, a_gpu, G, dt, nt, M_order, output_shot_pa
     @info "Starting GPU Multi-shot sequence, Total Sources = $n_sources"
     # n_sources > 1 && @warn "Multi-shot mode is not fully supported yet."
     @warn "Multi-shot mode is not fully supported yet."
-
 
     for i_src in 1:n_sources
         # Preparation
