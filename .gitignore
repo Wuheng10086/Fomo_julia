@@ -1,0 +1,59 @@
+# Build results
+*.dll
+*.exe
+*.o
+*.so
+*.dylib
+
+# Julia-specific
+*.ji
+*.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Output and data files
+/output/*
+!/output/.gitkeep
+
+# Data and model files (except for small examples)
+/models/*/
+!/models/.gitkeep
+!/models/**/*.jld2
+!/models/**/*.segy
+
+# Generated files
+*.tmp
+*.temp
+*.log
+
+# Backup files
+*~
+*.bak
+*.backup
+
+# Large files that shouldn't be committed
+*.bin
+*.dat
+
+# Large model files
+**/MODEL_*.segy
+**/Marmousi2_elastic_*.jld2
+**/SEAM_*.segy
