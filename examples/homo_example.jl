@@ -23,9 +23,9 @@ function run_homogeneous_test()
     # --- 1. Simulation Setup ---
     nx_p, nz_p = 1200, 800           # Physical domain grid dimensions
     dx, dz = 1.0f0, 1.0f0                                  # Grid spacing (meters)
-    nbc = 100                                                # HABC boundary layer width (grid points)
+    nbc = 50                                                # HABC boundary layer width (grid points)
     M_order = 5                                             # Half-stencil length (8th-order spatial accuracy)
-    nt = 7000                                               # Total number of time steps
+    nt = 5000                                               # Total number of time steps
     dt = 0.00005f0                                          # Time step (seconds) - chosen for CFL stability
 
     # --- 2. Define Homogeneous Medium ---

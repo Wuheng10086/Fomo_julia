@@ -20,6 +20,7 @@ using Printf
 using Statistics
 using CairoMakie
 using JLD2
+using Interpolations: Gridded, extrapolate, Flat
 
 include("../core/Structures.jl")
 
@@ -127,77 +128,50 @@ function init_medium_from_data(dx, dz, dx_m, dz_m, vp_raw, vs_raw, rho_raw, nbc,
     nx_total, nz_total = nx_p + 2 * pad, nz_p + 2 * pad
 
     # 1. Setup Interpolators
-    itp_vp = interpolate(vp_raw, BSpline(Cubic(Line(OnGrid()))))
-    sitp_vp = scale(itp_vp, (1:nx_m) * dx_m, (1:nz_m) * dz_m)
-    itp_vs = interpolate(vs_raw, BSpline(Cubic(Line(OnGrid()))))
-    sitp_vs = scale(itp_vs, (1:nx_m) * dx_m, (1:nz_m) * dz_m)
-    itp_rho = interpolate(rho_raw, BSpline(Cubic(Line(OnGrid()))))
-    sitp_rho = scale(itp_rho, (1:nx_m) * dx_m, (1:nz_m) * dz_m)
+    x_m = range(0, step=dx_m, length=nx_m)
+    z_m = range(0, step=dz_m, length=nz_m)
 
-    # 2. Interpolate onto computational grid with padding
-    # Staggered grid requires careful handling of offset locations
-    # Note: Julia is column-major (x-fast, z-slow), so [x, z] indexing
-    x_pad = [zeros(Float32, pad, nz_p + 2); zeros(Float32, nx_p, nz_p + 2); zeros(Float32, pad, nz_p + 2)]
-    z_pad = [zeros(Float32, nx_total, pad); zeros(Float32, nx_total, nz_p); zeros(Float32, nx_total, pad)]
+    # Use Flat() extrapolation for stable boundary layers
+    itp_vp_ext = extrapolate(interpolate((x_m, z_m), vp_raw, Gridded(Linear())), Flat())
+    itp_vs_ext = extrapolate(interpolate((x_m, z_m), vs_raw, Gridded(Linear())), Flat())
+    itp_rho_ext = extrapolate(interpolate((x_m, z_m), rho_raw, Gridded(Linear())), Flat())
 
-    # Interpolate material properties onto padded grid
-    for i in 1:nx_p, j in 1:nz_p
-        x_pos = (i - 1) * dx
-        z_pos = (j - 1) * dz
-        x_idx = i + pad
-        z_idx = j + pad
+    # 2. Allocate Arrays
+    rho_vx = zeros(Float32, nx_total, nz_total)
+    rho_vz = zeros(Float32, nx_total, nz_total)
+    lam = zeros(Float32, nx_total, nz_total)
+    mu_txx = zeros(Float32, nx_total, nz_total)
+    mu_txz = zeros(Float32, nx_total, nz_total)
 
-        x_pad[x_idx, z_idx] = sitp_vp(x_pos, z_pos)
-        z_pad[x_idx, z_idx] = sitp_vs(x_pos, z_pos)
+    # Physical coordinate mapping
+    function sample_phys(i, j, off_x, off_z)
+        px = (i - pad - 1 + off_x) * dx
+        pz = (j - pad - 1 + off_z) * dz
+        return px, pz
     end
 
-    # Copy values to boundary regions (constant extrapolation)
-    # Horizontal boundaries
-    for i in 1:pad, j in 1:nz_total
-        x_pad[i, j] = x_pad[pad+1, j]
-        z_pad[i, j] = z_pad[pad+1, j]
-        x_pad[nx_total-i+1, j] = x_pad[nx_total-pad, j]
-        z_pad[nx_total-i+1, j] = z_pad[nx_total-pad, j]
-    end
-    # Vertical boundaries
-    for i in 1:nx_total, j in 1:pad
-        x_pad[i, j] = x_pad[i, pad+1]
-        z_pad[i, j] = z_pad[i, pad+1]
-        x_pad[i, nz_total-j+1] = x_pad[i, nz_total-pad]
-        z_pad[i, nz_total-j+1] = z_pad[i, nz_total-pad]
-    end
+    # 3. Sample and compute Elastic Parameters (Staggered Grid Logic)
+    for j in 1:nz_total, i in 1:nx_total
+        # vx location (0, 0)
+        px_vx, pz_vx = sample_phys(i, j, 0.0, 0.0)
+        rho_vx[i, j] = itp_rho_ext(px_vx, pz_vx)
 
-    # 3. Compute Lame parameters and buoyancy on staggered grid
-    # Pre-allocate arrays with correct dimensions
-    rho_vx = similar(x_pad, Float32)
-    rho_vz = similar(x_pad, Float32)
-    lam = similar(x_pad, Float32)
-    mu_txx = similar(x_pad, Float32)
-    mu_txz = similar(x_pad, Float32)
+        # vz location (0.5, 0.5)
+        px_vz, pz_vz = sample_phys(i, j, 0.5, 0.5)
+        rho_vz[i, j] = itp_rho_ext(px_vz, pz_vz)
 
-    @inbounds for j in 1:nz_total, i in 1:nx_total
-        # Material properties at (i, j) staggered locations
-        vp2 = x_pad[i, j]^2
-        vs2 = z_pad[i, j]^2
-        rho = sitp_rho((i - pad - 1) * dx, (j - pad - 1) * dz)
+        # txx/tzz location (0.5, 0.0)
+        px_t, pz_t = sample_phys(i, j, 0.5, 0.0)
+        vp_t = itp_vp_ext(px_t, pz_t)
+        vs_t = itp_vs_ext(px_t, pz_t)
+        rho_t = itp_rho_ext(px_t, pz_t)
 
-        # Lame parameters: lambda and mu
-        lam[i, j] = rho * (vp2 - 2.0f0 * vs2)
-        mu_txx[i, j] = rho * vs2
-        mu_txz[i, j] = rho * vs2
+        lam[i, j] = Float32(rho_t * (vp_t^2 - 2 * vs_t^2))
+        mu_txx[i, j] = Float32(rho_t * vs_t^2)
 
-        # Buoyancy coefficients (1/rho) at staggered locations
-        rho_vx[i, j] = rho
-        rho_vz[i, j] = rho
-    end
-
-    # Adjust for staggered grid offsets (average between adjacent points)
-    @inbounds for j in 2:nz_total-1, i in 2:nx_total-1
-        # For vx and vz: average of rho values
-        rho_vx[i, j] = 0.5f0 * (rho_vx[i, j] + rho_vx[i, j-1])
-        rho_vz[i, j] = 0.5f0 * (rho_vz[i, j] + rho_vz[i-1, j])
-        # For mu at txz nodes
-        mu_txz[i, j] = 0.25f0 * (mu_txz[i, j] + mu_txz[i-1, j] + mu_txz[i, j-1] + mu_txz[i-1, j-1])
+        # txz location (0.0, 0.5)
+        px_xz, pz_xz = sample_phys(i, j, 0.0, 0.5)
+        mu_txz[i, j] = Float32(itp_rho_ext(px_xz, pz_xz) * itp_vs_ext(px_xz, pz_xz)^2)
     end
 
     return Medium(

@@ -14,7 +14,6 @@
   <video src="https://github.com/Wuheng10086/Fomo_julia/raw/main/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
 </p>
 
-
 ## ✨ 核心特性
 
 * **高阶交错网格 (SGFD)**：基于 Luo & Schuster (1990) 的原理，实现速度-应力场的空间交错采样，支持 **2M 阶** 空间精度。
@@ -51,8 +50,6 @@
 
 本项目严格遵循交错网格定义。在一个标准网格单元 (Cell) 内，各物理量的相对位置如下：
 
-
-
 | 物理量 | 相对位置 (Offset) | 说明 |
 | :--- | :--- | :--- |
 | **vx**, **rho_vx** | $(0, 0)$ | 水平分量速度与对应等效密度 |
@@ -70,24 +67,68 @@
 
 ```bash
 git clone https://github.com/Wuheng10086/Fomo_julia.git
-cd Fomo_ju
+cd Fomo_julia
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
+## 快速开始  
+确保已安装 [Julia](https://julialang.org/)。
+
+### 1. 均匀介质示例
+```bash
+julia -t auto examples/homo_example.jl
+```
+使用 -t auto 启动多线程，加速计算。
+
+### 2. SEAM 模型示例
+```bash
+julia -t auto examples/SEAM_example.jl
+```
+
+### 3. CUDA 示例
+```bash
+julia examples/SEAM_example_cuda.jl
+```
+
+---
 
 ## 📂 项目结构
 
-* `src/Structures.jl`: 核心数据结构定义（包含介质属性、波场变量及观测系统）。
-* `src/Kernels.jl`: 高阶有限差分算子实现与 HABC 核心逻辑（计算密集型核心）。
-* `src/Solver.jl`: 负责时间步循环调度、震源注入及数据记录。
-* `src/Utils.jl`: 包含网格插值、SEGY 数据加载、FD 系数计算及观测系统布设工具。
-* `src/ *[_cuda].jl`: 对应模块的 GPU/CUDA 加速实现  
-* `src/Elastic2D.jl`: 接口
-* `src/Elastic2D_cuda.jl`: CUDA接口
-
-* `homo_example.jl`: 运行示例
-* `SEAM_example.jl`: 运行示例
-* `SEAM_example_cuda.jl`: 运行示例
+```
+Fomo_julia/
+├── src/                           # 源代码目录
+│   ├── core/                      # 核心功能模块
+│   │   ├── Structures.jl          # 数据结构定义
+│   │   ├── Structures_cuda.jl     # CUDA 数据结构
+│   │   ├── Kernels.jl             # 计算核函数
+│   │   └── Kernels_cuda.jl        # CUDA 计算核函数
+│   ├── solvers/                   # 求解器模块
+│   │   ├── Solver.jl              # CPU 求解器
+│   │   └── Solver_cuda.jl         # CUDA 求解器
+│   ├── utils/                     # 工具函数
+│   │   └── Utils.jl               # 通用工具函数
+│   ├── configs/                   # 配置处理
+│   │   └── Config.jl              # 配置文件处理
+│   ├── Elastic2D.jl               # 主模块 (CPU 版本)
+│   └── Elastic2D_cuda.jl          # 主模块 (CUDA 版本)
+├── examples/                      # 示例脚本
+│   ├── homo_example.jl            # 均匀介质示例
+│   ├── SEAM_example.jl            # SEAM 模型示例 (CPU)
+│   ├── SEAM_example_cuda.jl       # SEAM 模型示例 (CUDA)
+│   └── run_cuda_from_toml.jl      # 从配置文件运行 (CUDA)
+├── configs/                       # 配置文件
+│   └── marmousi2_cuda.toml        # 示例配置
+├── models/                        # 模型数据
+│   ├── SEAM/                      # SEAM 模型数据
+│   └── Marmousi2/                 # Marmousi2 模型数据
+├── scripts/                       # 工具脚本
+│   └── preprocess_segy_to_jld2.jl # SEGY 预处理脚本
+├── docs/                          # 文档
+├── output/                        # 输出目录
+├── test/                          # 测试文件
+├── Project.toml                   # 项目依赖
+└── Manifest.toml                  # 依赖锁文件
+```
 
 ## 🤝 贡献与反馈
 

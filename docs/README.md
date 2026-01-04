@@ -12,15 +12,11 @@
   <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
 </p>
 
-
 https://github.com/user-attachments/assets/997ec81f-2bd0-4666-b3af-a1a02f37177f
-
 
 <p align="center">
   <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
 </p>
-
-
 
 ## ✨ Core Features
 
@@ -37,7 +33,7 @@ https://github.com/user-attachments/assets/997ec81f-2bd0-4666-b3af-a1a02f37177f
 
 **Parameters (SEAM model)**:  
 Grid size: $nx = 4444, nz = 3819$  
-Time steps: $steps = 11520$
+Time steps: $steps = 11520$  
 
 | Mode | Command / Environment | Time (Single Shot) |
 | :--- | :--- | :--- |
@@ -67,8 +63,6 @@ This project strictly follows the staggered-grid definition. Within a standard g
 
 > **Note**: The other three corners of the grid cell are centrosymmetric relative to the center.
 
-
-
 ---
 
 ## 📚 Academic References
@@ -88,28 +82,71 @@ The core algorithms of this project are based on the following academic literatu
 Ensure you have [Julia](https://julialang.org/) installed. After cloning the repository, run the following in the project directory:
 
 ```bash
-git clone [https://github.com/yourusername/Fomo_julia.git](https://github.com/yourusername/Fomo_julia.git)
+git clone https://github.com/Wuheng10086/Fomo_julia.git
 cd Fomo_julia
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
 ---
 
+## Quick Start
+Please ensure you have installed [Julia](https://julialang.org/).
+
+### 1. Homogeneous Medium Example
+```bash
+julia -t auto examples/homo_example.jl
+```
+Use `-t auto` to enable multi-threading.
+
+### 2. SEAM Model Example
+```bash
+julia -t auto examples/SEAM_example.jl
+```
+
+### 3. CUDA Example
+```bash
+julia examples/SEAM_example_cuda.jl
+```
+
 ---
 
-## 📂 Project Structure
+## 📁 Project Structure
 
-* `src/Structures.jl`: Core data structure definitions (includes Medium properties, Wavefield variables, and Survey Geometry).
-* `src/Kernels.jl`: Implementation of high-order finite-difference operators and HABC core logic (the computational heart of the solver).
-* `src/Solver.jl`: Manages time-stepping scheduling, source injection, and data recording.
-* `src/Utils.jl`: Includes grid interpolation, SEG-Y data loading, FD coefficient calculation, and survey setup tools.  
-* `src/ *[_cuda].jl`: GPU/CUDA accelerated implementations for the corresponding modules.
-* `src/Elastic2D.jl`: CPU Interface
-* `src/Elastic2D_cuda.jl`: CUDA Interface
-
-* `homo_example.jl`: Homogeneous medium example
-* `SEAM_example.jl`: SEAM model example (CPU)
-* `SEAM_example_cuda.jl`: SEAM model example (CUDA)
+```
+Fomo_julia/
+├── src/                           # Source code directory
+│   ├── core/                      # Core functionality modules
+│   │   ├── Structures.jl          # Data structure definitions
+│   │   ├── Structures_cuda.jl     # CUDA data structures
+│   │   ├── Kernels.jl             # Computational kernels
+│   │   └── Kernels_cuda.jl        # CUDA computational kernels
+│   ├── solvers/                   # Solver modules
+│   │   ├── Solver.jl              # CPU solver
+│   │   └── Solver_cuda.jl         # CUDA solver
+│   ├── utils/                     # Utility functions
+│   │   └── Utils.jl               # General utility functions
+│   ├── configs/                   # Configuration processing
+│   │   └── Config.jl              # Configuration file processing
+│   ├── Elastic2D.jl               # Main module (CPU version)
+│   └── Elastic2D_cuda.jl          # Main module (CUDA version)
+├── examples/                      # Example scripts
+│   ├── homo_example.jl            # Homogeneous medium example
+│   ├── SEAM_example.jl            # SEAM model example (CPU)
+│   ├── SEAM_example_cuda.jl       # SEAM model example (CUDA)
+│   └── run_cuda_from_toml.jl      # Run from config file (CUDA)
+├── configs/                       # Configuration files
+│   └── marmousi2_cuda.toml        # Example configuration
+├── models/                        # Model data
+│   ├── SEAM/                      # SEAM model data
+│   └── Marmousi2/                 # Marmousi2 model data
+├── scripts/                       # Utility scripts
+│   └── preprocess_segy_to_jld2.jl # SEGY preprocessing script
+├── docs/                          # Documentation
+├── output/                        # Output directory
+├── test/                          # Test files
+├── Project.toml                   # Project dependencies
+└── Manifest.toml                  # Dependency lock file
+```
 
 ## 🤝 Contributing & Feedback
 
