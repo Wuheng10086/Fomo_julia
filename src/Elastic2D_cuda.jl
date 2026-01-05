@@ -12,7 +12,7 @@
 # - CUDA-accelerated computational kernels
 # - Higdon Absorbing Boundary Conditions (HABC) on GPU
 # - Free surface boundary condition support
-# - Video export with CairoMakie
+# - Video export with CairoMakie in headless mode
 # - Multi-shot processing capabilities
 # - Automatic GPU/CPU data transfer
 # - SEG-Y model loading
@@ -27,7 +27,7 @@
 module Elastic2D_cuda
 
 using Printf, Dates, Statistics, CUDA
-using GLMakie, CairoMakie, ProgressMeter
+using CairoMakie, ProgressMeter
 using Interpolations, SegyIO
 
 # Export CPU data structures

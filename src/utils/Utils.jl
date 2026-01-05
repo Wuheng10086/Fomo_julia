@@ -15,10 +15,9 @@
 using Interpolations
 using SegyIO
 using Plots
-using GLMakie
+using CairoMakie
 using Printf
 using Statistics
-using CairoMakie
 using JLD2
 using Interpolations: Gridded, extrapolate, Flat
 
@@ -382,27 +381,49 @@ end
 
 """
     generate_mp4_from_buffer(buffer, vc, dt, save_gap)
-Exports an MP4 video from a 3D wavefield buffer using GLMakie.
+Exports an MP4 video from a 3D wavefield buffer using CairoMakie in headless mode.
 """
-function generate_mp4_from_buffer(buffer, vc, dt, save_gap)
+function generate_mp4_from_buffer(buffer, vc, dt, save_gap;
+    qclip=0.99)
     nx_s, nz_s, n_frames = size(buffer)
-    fig = Makie.Figure(size=(800, round(Int, 800 * nz_s / nx_s)))
+    # Use CairoMakie for headless (no GUI) rendering
+    CairoMakie.activate!()  # Activate headless mode
 
-    rms = sqrt(mean(buffer .^ 2))
-    clip_val = 2.0f0 * rms
+    # Calculate global clip value for consistent color scaling
+    vals = abs.(buffer[:])
+    clip = quantile(vals, qclip)
 
-    frame_obs = Observable(buffer[:, :, 1])
-    title_obs = Observable("Time: 0.0000 s")
+    # Create figure without displaying
+    fig = CairoMakie.Figure(size=(nx_s * 2, nz_s * 2))
+    ax = CairoMakie.Axis(fig[1, 1], 
+        title="Wave Propagation", 
+        aspect=DataAspect(), 
+        yreversed=true,
+        xlabel="X", ylabel="Z")
 
-    ax = Axis(fig[1, 1], title=title_obs, aspect=DataAspect(), yreversed=true)
-    hm = Makie.heatmap!(ax, frame_obs, colormap=:balance, colorrange=(-clip_val, clip_val))
-    Makie.Colorbar(fig[1, 2], hm)
-
-    Makie.record(fig, vc.filename, 1:n_frames; framerate=vc.fps) do i
-        frame_obs[] = buffer[:, :, i]
-        title_obs[] = @sprintf("Time: %.4f s", (i - 1) * dt * save_gap)
+    # Animate frames
+    frames = 1:n_frames
+    record(fig, vc.filename, frames; framerate=vc.fps) do i
+        # Clear the axis
+        empty!(ax)
+        
+        # Update title with current time
+        current_time = (i - 1) * dt * save_gap
+        ax.title = @sprintf("Wave Propagation | Time: %.4f s", current_time)
+        
+        # Plot current frame
+        CairoMakie.heatmap!(ax, buffer[:, :, i], 
+            colormap=:balance, 
+            colorrange=(-clip, clip))
+        
+        # Add colorbar to each frame
+        CairoMakie.Colorbar(fig[1, 2], 
+            colorrange=(-clip, clip), 
+            colormap=:balance)
     end
-    @info "Video saved: $(vc.filename)"
+    
+    @info "Video saved to $(vc.filename)"
+    return fig
 end
 
 

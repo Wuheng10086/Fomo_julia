@@ -11,7 +11,7 @@
 # - High-order staggered-grid finite difference method
 # - Higdon Absorbing Boundary Conditions (HABC)
 # - Free surface boundary condition support
-# - Real-time visualization with GLMakie
+# - Video export with CairoMakie in headless mode
 # - Multi-shot processing capabilities
 # - SEG-Y model loading
 # 
@@ -25,7 +25,7 @@
 module Elastic2D
 
 using Printf, Dates, Statistics
-using GLMakie, CairoMakie, ProgressMeter, LoopVectorization
+using CairoMakie, ProgressMeter, LoopVectorization
 using Interpolations, SegyIO
 
 # Export core data structures

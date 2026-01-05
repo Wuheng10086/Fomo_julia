@@ -7,7 +7,7 @@
 # receiver recording, and optional real-time visualization.
 
 using Printf, Dates
-using GLMakie
+using CairoMakie
 using ProgressMeter
 
 # ==============================================================================
