@@ -1,15 +1,14 @@
 # ==============================================================================
 # src/Utils.jl
 # 
-# Utility functions for grid setup, finite-difference coefficients, 
-# geometry deployment, and visualization.
+# Utility functions for 2D Elastic Wave Simulation
 # 
-# This file contains helper functions for:
-# - FD coefficient calculation
-# - HABC initialization
-# - Medium interpolation
-# - Model loading
-# - Shot gather visualization
+# This module provides a collection of utility functions for seismic modeling,
+# including finite difference utilities, model building, wavelet generation,
+# geometry setup, visualization tools, and I/O operations.
+# 
+# Functions are organized by functionality to improve code organization and
+# maintainability. Each section is clearly marked with comments.
 # ==============================================================================
 
 using Interpolations
@@ -19,6 +18,8 @@ using CairoMakie
 using Printf
 using Statistics
 using JLD2
+using Dates
+using LoopVectorization
 using Interpolations: Gridded, extrapolate, Flat
 
 include("../core/Structures.jl")
@@ -181,92 +182,10 @@ function init_medium_from_data(dx, dz, dx_m, dz_m, vp_raw, vs_raw, rho_raw, nbc,
     )
 end
 
-"""
-    load_segy_model(path::String) -> Array{Float32, 2}
-
-Loads a seismic model from a SEG-Y file and returns it as a transposed array.
-
-# Arguments
-- `path::String`: Path to the SEG-Y file
-
-# Returns
-- `Array{Float32, 2}`: Loaded model data
-"""
-function load_segy_model(path::String)
-    @info "Loading model: $path"
-    d = segy_read(path)
-    return Float32.(d.traces.trace_headers[end:-1:1]) # Reverse traces order and convert to Float32
-end
-
-"""
-    save_shot_gather_raw(data, dt, filename; title="Shot Gather", xlabel="Trace #", ylabel="Time (s)")
-
-Saves a shot gather as a PNG image.
-
-# Arguments
-- `data`: Shot gather data
-- `dt`: Time sampling interval
-- `filename`: Output filename
-- `title`, `xlabel`, `ylabel`: Plot labels
-"""
-function save_shot_gather_raw(data, dt, filename; title="Shot Gather", xlabel="Trace #", ylabel="Time (s)")
-    nt, ntrace = size(data)
-    t_max = (nt - 1) * dt
-
-    p = Plots.heatmap(
-        1:ntrace, 0:dt:t_max, data',
-        title=title, xlabel=xlabel, ylabel=ylabel,
-        color=:balance, aspect_ratio=:equal
-    )
-    Plots.savefig(p, filename)
-    @info "Shot gather saved to $filename"
-end
-
-"""
-    save_shot_gather_bin(data, filename)
-
-Saves a shot gather as a binary file.
-
-# Arguments
-- `data`: Shot gather data
-- `filename`: Output filename
-"""
-function save_shot_gather_bin(data, filename)
-    open(filename, "w") do io
-        write(io, data)
-    end
-    @info "Binary shot gather saved to $filename"
-end
 
 # ==============================================================================
-# 3. GEOMETRY SETUP
+# 3. WAVELET GENERATION UTILS
 # ==============================================================================
-
-"""
-    setup_sources(medium, x_srcs, z_srcs, wavelet, type="pressure")
-Converts physical source locations (meters) to grid indices with staggered offsets.
-    - type: "pressure" (default), "vz", "vx", "txx", "tzz", "txz"
-    - wavelet: Ricker wavelet or other time series
-    - Returns: Sources structure
-"""
-function setup_sources(medium::Medium, x_srcs, z_srcs, wavelet, type="pressure")
-    pad = medium.pad
-    if type == "pressure" || type == "txx" || type == "tzz"
-        off_x, off_z = 0.5f0, 0.0f0
-    elseif type == "vz"
-        off_x, off_z = 0.5f0, 0.5f0
-    elseif type == "txz"
-        off_x, off_z = 0.0f0, 0.5f0
-    else # vx
-        off_x, off_z = 0.0f0, 0.0f0
-    end
-
-    indices_i = @. round(Int, x_srcs / medium.dx + pad - off_x) + 1
-    indices_j = @. round(Int, z_srcs / medium.dz + pad - off_z) + 1
-
-    @info "Source mapped to Grid Indices: I=$(indices_i), J=$(indices_j)"
-    return Sources(indices_i, indices_j, type, wavelet)
-end
 
 """
     build_wavelet(wavelet_type, fpeak, dt, nt) -> Vector{Float32}
@@ -323,6 +242,45 @@ function build_wavelet(
     return wavelet
 end
 
+"""
+    ricker_wavelet(f0::Float32, dt::Float32, nt::Int)
+Generate a Ricker wavelet with given parameters
+"""
+function ricker_wavelet(f0::Float32, dt::Float32, nt::Int)
+    t = (0:nt-1) .* dt
+    t0 = 1.5f0 / f0
+    @. (1 - 2 * (π * f0 * (t - t0))^2) * exp(-(π * f0 * (t - t0))^2)
+end
+
+# ==============================================================================
+# 4. GEOMETRY SETUP UTILS
+# ==============================================================================
+
+"""
+    setup_sources(medium, x_srcs, z_srcs, wavelet, type="pressure")
+Converts physical source locations (meters) to grid indices with staggered offsets.
+    - type: "pressure" (default), "vz", "vx", "txx", "tzz", "txz"
+    - wavelet: Ricker wavelet or other time series
+    - Returns: Sources structure
+"""
+function setup_sources(medium::Medium, x_srcs, z_srcs, wavelet, type="pressure")
+    pad = medium.pad
+    if type == "pressure" || type == "txx" || type == "tzz"
+        off_x, off_z = 0.5f0, 0.0f0
+    elseif type == "vz"
+        off_x, off_z = 0.5f0, 0.5f0
+    elseif type == "txz"
+        off_x, off_z = 0.0f0, 0.5f0
+    else # vx
+        off_x, off_z = 0.0f0, 0.0f0
+    end
+
+    indices_i = @. round(Int, x_srcs / medium.dx + pad - off_x) + 1
+    indices_j = @. round(Int, z_srcs / medium.dz + pad - off_z) + 1
+
+    @info "Source mapped to Grid Indices: I=$(indices_i), J=$(indices_j)"
+    return Sources(indices_i, indices_j, type, wavelet)
+end
 
 """
     setup_line_receivers(medium, x1, x2, dx_rec, z_rec, nt, type="vz")
@@ -344,8 +302,101 @@ function setup_line_receivers(medium::Medium, x1, x2, dx_rec, z_rec, nt, type="v
     return Receivers(i_rec[mask], j_rec[mask], type, zeros(Float32, nt, sum(mask)))
 end
 
+"""
+    generate_positions(x_start::Real, dx::Real, n::Int, x_max::Real)
+Generate positions based on starting point, spacing and count, limited by x_max
+"""
+function generate_positions(
+    x_start::Real,
+    dx::Real,
+    n::Int,
+    x_max::Real
+)
+    n > 0 || return Float32[]
+
+    xs = x_start .+ (0:n-1) .* dx
+    xs = xs[(xs.>=0).&(xs.<=x_max)]
+
+    return Float32.(xs)
+end
+
+"""
+    setup_receivers_from_positions(medium, x_phys, z_phys, nt, type)
+
+Receivers defined by explicit physical coordinates (meters).
+"""
+function setup_receivers_from_positions(
+    medium::Medium,
+    x_phys::AbstractVector{<:Real},
+    z_phys::AbstractVector{<:Real},
+    nt::Int,
+    type::String
+)
+    @assert length(x_phys) == length(z_phys)
+
+    pad = medium.pad
+
+    off_x = (type == "vz" || type == "txx" || type == "p") ? 0.5f0 : 0.0f0
+    off_z = (type == "vz" || type == "txz") ? 0.5f0 : 0.0f0
+
+    i_rec = Int32[]
+    j_rec = Int32[]
+
+    for (x, z) in zip(x_phys, z_phys)
+        i = Int32(round(x / medium.dx + pad - off_x) + 1)
+        j = Int32(round(z / medium.dz + pad - off_z) + 1)
+
+        if 1 ≤ i ≤ medium.nx && 1 ≤ j ≤ medium.nz
+            push!(i_rec, i)
+            push!(j_rec, j)
+        end
+    end
+
+    return Receivers(
+        i_rec,
+        j_rec,
+        type,
+        zeros(Float32, nt, length(i_rec))
+    )
+end
+
+function setup_sources_from_positions(
+    medium::Medium,
+    x_phys::AbstractVector{<:Real},
+    z_phys::AbstractVector{<:Real},
+    wavelet::AbstractVector{<:Real},
+    type::String
+)
+    @assert length(x_phys) == length(z_phys)
+
+    pad = medium.pad
+
+    off_x = (type == "pressure") ? 0.5f0 : 0.0f0
+    off_z = (type == "pressure") ? 0.5f0 : 0.0f0
+
+    i_src = Int32[]
+    j_src = Int32[]
+
+    for (x, z) in zip(x_phys, z_phys)
+        i = Int32(round(x / medium.dx + pad - off_x) + 1)
+        j = Int32(round(z / medium.dz + pad - off_z) + 1)
+
+        if 1 ≤ i ≤ medium.nx && 1 ≤ j ≤ medium.nz
+            push!(i_src, i)
+            push!(j_src, j)
+        end
+    end
+
+    return Sources(
+        i_src,
+        j_src,
+        type,
+        wavelet
+    )
+end
+
 # ==============================================================================
-# 4. VISUALIZATION & I/O
+# 5. VISUALIZATION & I/O UTILS
 # ==============================================================================
 
 """
@@ -399,6 +450,7 @@ function generate_mp4_from_buffer(buffer, vc, dt, save_gap;
         title="Wave Propagation", 
         aspect=DataAspect(), 
         yreversed=true,
+
         xlabel="X", ylabel="Z")
 
     # Animate frames
@@ -425,7 +477,6 @@ function generate_mp4_from_buffer(buffer, vc, dt, save_gap;
     @info "Video saved to $(vc.filename)"
     return fig
 end
-
 
 """
 save_shot_gather_raw(rec_data_gpu, dt, filename="shot_gather_raw.png")
@@ -456,28 +507,67 @@ function save_shot_gather_png(data_cpu, dt, filename)
 end
 
 """
-save_shot_gather_bin(rec_data_gpu, filename="shot_gather.bin")
-Exports receiver data to a raw Float32 binary file.
+    save_shot_gather_raw(data, dt, filename; title="Shot Gather", xlabel="Trace #", ylabel="Time (s)")
+
+Saves a shot gather as a PNG image.
+
+# Arguments
+- `data`: Shot gather data
+- `dt`: Time sampling interval
+- `filename`: Output filename
+- `title`, `xlabel`, `ylabel`: Plot labels
 """
-function save_shot_gather_bin(rec_data_gpu, filename="shot_gather.bin")
-    data_cpu = Array(rec_data_gpu)
-    nt, n_rec = size(data_cpu)
-    open(filename, "w") do io
-        write(io, data_cpu)
-    end
-    @info "Binary export complete: $filename ($nt x $n_rec)"
+function save_shot_gather_raw(data, dt, filename; title="Shot Gather", xlabel="Trace #", ylabel="Time (s)")
+    nt, ntrace = size(data)
+    t_max = (nt - 1) * dt
+
+    p = Plots.heatmap(
+        1:ntrace, 0:dt:t_max, data',
+        title=title, xlabel=xlabel, ylabel=ylabel,
+        color=:balance, aspect_ratio=:equal
+    )
+    Plots.savefig(p, filename)
+    @info "Shot gather saved to $filename"
 end
 
-#################################################
-# 5. IO
+"""
+    save_shot_gather_bin(data, filename)
+
+Saves a shot gather as a binary file.
+
+# Arguments
+- `data`: Shot gather data
+- `filename`: Output filename
+"""
+function save_shot_gather_bin(data, filename)
+    open(filename, "w") do io
+        write(io, data)
+    end
+    @info "Binary shot gather saved to $filename"
+end
+
+# ==============================================================================
+# 6. MODEL I/O UTILS
+# ==============================================================================
+
 """
     load_segy_model(path) -> Matrix{Float32}
 Reads a SEG-Y file and returns the data as a Float32 matrix.
 """
 function load_segy_model(path)
     !isfile(path) && error("SEGY file not found at: $path")
+    @info "Loading model: $path"
     block = segy_read(path)
     return Float32.(block.data)
+end
+
+"""
+    read_segy_field(path::String; transpose=true)
+Read a SEGY field and optionally transpose it.
+"""
+function read_segy_field(path::String; transpose=true)
+    data = load_segy_model(path)
+    return transpose ? data' : data
 end
 
 """

@@ -4,22 +4,20 @@ Pkg.activate(".")
 
 println("Testing project structure...")
 
-# Test CPU module
+# Test unified module
 try
     include("../src/Elastic2D.jl")
     using .Elastic2D
-    println("✓ CPU module loaded successfully")
+    println("✓ Unified module loaded successfully")
+    
+    # Check if CUDA is available
+    if @isdefined CUDA_AVAILABLE && CUDA_AVAILABLE
+        println("✓ CUDA support is available")
+    else
+        println("ℹ CUDA support is not available")
+    end
 catch e
-    println("✗ Error loading CPU module: $e")
-end
-
-# Test CUDA module (if available)
-try
-    include("../src/Elastic2D_cuda.jl")
-    using .Elastic2D_cuda
-    println("✓ CUDA module loaded successfully")
-catch e
-    println("⚠ CUDA module not loaded (possibly no GPU): $e")
+    println("✗ Error loading unified module: $e")
 end
 
 println("Structure test completed.")

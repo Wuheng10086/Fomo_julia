@@ -1,21 +1,21 @@
 # Fomo_julia: High-Order Elastic Wave Finite-Difference Simulator
 
-[中文文档](docs/README_zh.md) || [English](docs/README.md)  
+[中文文档](README_CN.md) || [English](README.md)  
 
 **Still in development**
 
 **Fomo_julia** is a high-performance 2D isotropic elastic wave numerical simulator developed in Julia. It employs a high-order staggered-grid finite-difference (SGFD) scheme combined with an advanced Hybrid Absorbing Boundary Condition (HABC). It provides a user-friendly interface for survey geometry setup, aiming to be an efficient and accessible tool for seismic wavefield modeling (forward modeling).
 
-![Simulation Example](docs/homogeneous_test.gif)
+![Simulation Example](https://github.com/Wuheng10086/Fomo_julia/raw/main/homogeneous_test.gif)
 
 <p align="center">
-  <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/docs/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
+  <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/homogeneous_test.mp4" width="80%" controls autoplay loop muted></video>
 </p>
 
 https://github.com/user-attachments/assets/997ec81f-2bd0-4666-b3af-a1a02f37177f
 
 <p align="center">
-  <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/docs/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
+  <video src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/master/seam_cuda_p_wave.mp4" width="80%" alt="SEAM example" controls autoplay loop muted></video>
 </p>
 
 ## ✨ Core Features
@@ -24,8 +24,10 @@ https://github.com/user-attachments/assets/997ec81f-2bd0-4666-b3af-a1a02f37177f
 * **Hybrid Absorbing Boundary (HABC)**: Following Liu & Sen (2012), it suppresses artificial reflections effectively by blending one-way wave extrapolation with two-way wave spatial weighting.
 * **Free Surface Simulation**: Supports top free-surface boundary conditions, accurately modeling surface waves (Rayleigh waves).
 * **Performance Optimization**: Utilizes `LoopVectorization.jl` (@tturbo) for SIMD optimization and supports multi-threading, achieving performance close to native C/Fortran code.
-* **CUDA Support**: Includes a CUDA-accelerated version, providing significant speedups for large-scale models (e.g., SEAM).
+* **Unified CPU/GPU Support**: Single module supports both CPU and GPU execution. CUDA acceleration provides significant speedups for large-scale models (e.g., SEAM).
 * **Format Compatibility**: Native support for SEG-Y format (via SegyIO) and raw binary velocity model loading.
+
+---
 
 ## 🚀 Performance Benchmarks
 
@@ -36,15 +38,17 @@ Time steps: $steps = 11520$
 | Mode | Command / Environment | Time (Single Shot) |
 | :--- | :--- | :--- |
 | **CPU Performance** | `julia -t auto SEAM_example.jl` | ≈ 35 min |
-| **CUDA Performance** | `julia SEAM_example_cuda.jl` | **< 3 min** (RTX 3060 12GB) |
+| **CUDA Performance** | `julia SEAM_example.jl gpu` | **< 3 min** (RTX 3060 12GB) |
 
 **Model & Results**:  
-<img src="SEAM_setup_check.png" style="width:70%;" alt="SEAM Vp & Geometry">  
+<img src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/main/SEAM_setup_check.png" style="width:70%;" alt="SEAM Vp & Geometry">  
 *Vp model and survey geometry setup*
 
-<img src="SEAM_Vz_Gather.png" style="width:70%;" alt="Shot Gather">  
+<img src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/main/SEAM_Vz_Gather.png" style="width:70%;" alt="Shot Gather">  
 
 *Simulated shot gather*
+
+---
 
 ## 📐 Grid Definition & Field Layout
 
@@ -59,6 +63,8 @@ This project strictly follows the staggered-grid definition. Within a standard g
 
 > **Note**: The other three corners of the grid cell are centrosymmetric relative to the center.
 
+---
+
 ## 📚 Academic References
 
 The core algorithms of this project are based on the following academic literature:
@@ -69,6 +75,8 @@ The core algorithms of this project are based on the following academic literatu
 2. **Hybrid Absorbing Boundary Condition (HABC)**:
    Liu, Y., & Sen, M. K. (2012). *A hybrid absorbing boundary condition for elastic staggered-grid modelling*. Geophysical Prospecting, 60(6), 1114-1132. [DOI: 10.1111/j.1365-2478.2011.01051.x](https://doi.org/10.1111/j.1365-2478.2011.01051.x)
 
+---
+
 ## 📦 Installation Guide
 
 Ensure you have [Julia](https://julialang.org/) installed. After cloning the repository, run the following in the project directory:
@@ -78,6 +86,8 @@ git clone https://github.com/Wuheng10086/Fomo_julia.git
 cd Fomo_julia
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
+
+---
 
 ## Quick Start
 Please ensure you have installed [Julia](https://julialang.org/).
@@ -93,47 +103,49 @@ Use `-t auto` to enable multi-threading.
 julia -t auto examples/SEAM_example.jl
 ```
 
-### 3. CUDA Example
+### 3. Unified CPU/GPU Execution from Config
 ```bash
-julia examples/SEAM_example_cuda.jl
+# CPU execution (default)
+julia -t auto run.jl configs/marmousi2.toml cpu
+
+# GPU execution (if CUDA available)
+julia run.jl configs/marmousi2.toml gpu
 ```
+
+---
 
 ## 📁 Project Structure
 
 ```
 Fomo_julia/
-├── src/                           # Source code directory
-│   ├── core/                      # Core functionality modules
-│   │   ├── Structures.jl          # Data structure definitions
-│   │   ├── Structures_cuda.jl     # CUDA data structures
-│   │   ├── Kernels.jl             # Computational kernels
-│   │   └── Kernels_cuda.jl        # CUDA computational kernels
-│   ├── solvers/                   # Solver modules
-│   │   ├── Solver.jl              # CPU solver
-│   │   └── Solver_cuda.jl         # CUDA solver
-│   ├── utils/                     # Utility functions
-│   │   └── Utils.jl               # General utility functions
-│   ├── configs/                   # Configuration processing
-│   │   └── Config.jl              # Configuration file processing
-│   ├── Elastic2D.jl               # Main module (CPU version)
-│   └── Elastic2D_cuda.jl          # Main module (CUDA version)
-├── examples/                      # Example scripts
-│   ├── homo_example.jl            # Homogeneous medium example
-│   ├── SEAM_example.jl            # SEAM model example (CPU)
-│   ├── SEAM_example_cuda.jl       # SEAM model example (CUDA)
-│   └── run_cuda_from_toml.jl      # Run from config file (CUDA)
-├── configs/                       # Configuration files
-│   └── marmousi2_cuda.toml        # Example configuration
-├── models/                        # Model data
-│   ├── SEAM/                      # SEAM model data
-│   └── Marmousi2/                 # Marmousi2 model data
-├── scripts/                       # Utility scripts
-│   └── preprocess_segy_to_jld2.jl # SEGY preprocessing script
-├── docs/                          # Documentation
-├── output/                        # Output directory
-├── test/                          # Test files
-├── Project.toml                   # Project dependencies
-└── Manifest.toml                  # Dependency lock file
+├── .gitignore              # Git ignore rules
+├── Manifest.toml           # Julia package manifest
+├── Project.toml            # Julia project dependencies
+├── README.md               # English documentation
+├── README_CN.md            # Chinese documentation
+├── run.jl                  # Unified entry point for CPU/GPU execution
+├── configs/                # Configuration files
+│   └── marmousi2.toml     # Default configuration
+├── docs/                   # Documentation files
+├── examples/               # Example scripts
+│   ├── homo_example.jl     # Homogeneous model example
+│   └── SEAM_example.jl     # SEAM model example
+├── models/                 # Model data files (not included in repo)
+├── output/                 # Output directory for simulation results
+├── scripts/                # Utility scripts
+├── src/                    # Source code
+│   ├── Elastic2D.jl        # Unified CPU/GPU module
+│   ├── configs/            # Configuration handling
+│   ├── core/               # Core data structures
+│   │   ├── Kernels.jl      # CPU computational kernels
+│   │   ├── Kernels_cuda.jl # GPU computational kernels (if CUDA available)
+│   │   ├── Structures.jl   # Core data structures
+│   │   └── Structures_cuda.jl # GPU data structures (if CUDA available)
+│   ├── solvers/            # Solver implementations
+│   │   ├── Solver.jl       # CPU solver
+│   │   └── Solver_cuda.jl  # GPU solver (if CUDA available)
+│   └── utils/              # Utility functions
+└── test/                   # Test files
 ```
 
 ## 🤝 Contributing & Feedback
@@ -151,4 +163,4 @@ This project is licensed under the [MIT License](LICENSE).
 **About the Name**: The name **Fomo** is derived from the abbreviation for **FO**rward **MO**deling. Although the author once mistakenly thought it shared a name with a plushie called "Fumo," this "beautiful misunderstanding" has added a touch of dark humor to the project.  
 
 If you are unfamiliar with what a "Fumo" is, please see the image below:  
-<img src="docs/fumo.jpg" style="width:30%;" alt="What is fumo?">
+<img src="https://raw.githubusercontent.com/Wuheng10086/Fomo_julia/main/fumo.jpg" style="width:30%;" alt="What is fumo?">

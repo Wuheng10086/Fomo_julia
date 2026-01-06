@@ -25,6 +25,10 @@ struct ElasticModel{T}
     rho::Array{T,2}
     dx::T
     dz::T
+    nx::Int
+    nz::Int
+    x_max::Float32
+    z_max::Float32
 end
 
 """

@@ -1,0 +1,34 @@
+[model]
+path = "models/Marmousi2/Marmousi2_elastic_1.25m.jld2"
+
+[grid]
+dx = 1.25
+dz = 1.25
+nbc = 64
+fd_order = 8
+free_surface = false
+
+[time]
+total_time = 5.0
+cfl = 0.1
+
+[source]
+f0 = 30.0
+x_start = 0.0
+z = 2.0
+dx = 25.0
+n = 9999
+type = "pressure"
+
+[receiver]
+x_start = 100.0
+z = 1.0
+dx = 12.5
+n = 100
+type = "vz"
+
+[output]
+prefix = "output/marmousi2_shot"
+save_shot_png = true
+save_shot_bin = true
+save_shot_jld2 = false

@@ -61,7 +61,7 @@ function run_homogeneous_test()
     @info "time steps: $nt"
 
     # Generate Ricker Wavelet
-    tau = pi * f0 .* (t .- t0)
+    tau = π * f0 .* (t .- t0)
     wavelet = (1.0f0 .- 2.0f0 .* tau .^ 2) .* exp.(-tau .^ 2)
 
     sources = setup_sources(medium, [sx], [sz], 1f6 .* wavelet, "pressure")

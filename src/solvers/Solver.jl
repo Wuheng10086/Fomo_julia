@@ -290,7 +290,7 @@ function reset_wavefield!(W::Wavefield)
     W.txx .= 0f0
     W.tzz .= 0f0
     W.txz .= 0f0
-    
+
     # Also reset old fields
     W.vx_old .= 0f0
     W.vz_old .= 0f0

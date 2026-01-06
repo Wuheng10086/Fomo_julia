@@ -19,41 +19,31 @@ Thumbs.db
 .env
 .venv
 env/
-venv/
-ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Julia packages and artifacts
+*.tar
+*.tar.gz
+*.tar.bz2
+*.zip
 
-# Output and data files
-/output/*
-!/output/.gitkeep
+# Julia package manager
+Manifest.toml
+Project.toml.bak
 
-# Data and model files (except for small examples)
-/models/*/
-!/models/.gitkeep
-!/models/**/*.jld2
-!/models/**/*.segy
+# Model data files (these can be very large)
+models/*.segy
+models/*.sgy
+models/*.jld2
+models/*.h5
+models/*.hdf5
 
-# Generated files
+# Output files
+output/*
+!output/.gitkeep
+
+# Temporary files
 *.tmp
 *.temp
-*.log
-
-# Backup files
-*~
 *.bak
-*.backup
-
-# Large files that shouldn't be committed
-*.bin
-*.dat
-
-# Large model files
-**/MODEL_*.segy
-**/Marmousi2_elastic_*.jld2
-**/SEAM_*.segy
+*~
+\#*\#
