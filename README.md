@@ -4,7 +4,8 @@
 
 **Fomo_julia** is a high-performance 2D isotropic elastic wave numerical simulator developed in Julia. It employs a high-order staggered-grid finite-difference (SGFD) scheme combined with an advanced Hybrid Absorbing Boundary Condition (HABC). 
 
-![Simulation Example](homogeneous_test.gif)
+
+https://github.com/user-attachments/assets/bc0adaac-b37c-4859-9303-9dcff79c1cc3
 
 ## ✨ Core Features
 
@@ -18,7 +19,7 @@
 
 ---
 
-## 🎯 What's New in v2
+## 🎯 What's New
 
 ### Unified Backend Architecture
 ```julia
@@ -30,6 +31,7 @@ const BACKEND = backend(:cuda)  # GPU acceleration
 medium = init_medium(vp, vs, rho, dx, dz, nbc, fd_order, BACKEND)
 run_shots!(BACKEND, wavefield, medium, ...)
 ```
+
 
 ### Smart Model Loader
 ```julia
