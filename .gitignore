@@ -31,6 +31,7 @@ Manifest.toml
 Project.toml.bak
 
 # Model data files (these can be very large)
+models/*
 models/*.segy
 models/*.sgy
 models/*.jld2
@@ -40,6 +41,10 @@ models/*.hdf5
 # Output files
 output/*
 !output/.gitkeep
+*.mp4
+*.bin
+*.json
+*.txt
 
 # Temporary files
 *.tmp

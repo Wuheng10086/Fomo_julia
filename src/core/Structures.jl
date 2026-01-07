@@ -1,210 +1,155 @@
 # ==============================================================================
-# Structures.jl
-# 
-# Data structures for 2D Elastic Wave Simulation (Staggered Grid)
-# 
-# This file defines the core data structures used in the elastic wave simulation,
-# including medium properties, wavefield variables, boundary conditions,
-# sources, receivers, geometry, and visualization settings.
+# core/structures.jl
+#
+# Unified data structures using parametric types
+# Same struct works for both CPU (Array) and GPU (CuArray)
+# ==============================================================================
+
+# ==============================================================================
+# Wavefield - Parametric over array type
 # ==============================================================================
 
 """
-    ElasticModel{T}
-Stores raw velocity and density models loaded from external files.
+    Wavefield{T}
 
-# Fields
-- `vp::Array{T,2}`: P-wave velocity grid
-- `vs::Array{T,2}`: S-wave velocity grid  
-- `rho::Array{T,2}`: Density grid
-- `dx::T`: Grid spacing in X direction
-- `dz::T`: Grid spacing in Z direction
+Velocity and stress components. Works for both CPU and GPU.
+`T` is the array type (Array{Float32,2} or CuArray{Float32,2}).
 """
-struct ElasticModel{T}
-    vp::Array{T,2}
-    vs::Array{T,2}
-    rho::Array{T,2}
-    dx::T
-    dz::T
+mutable struct Wavefield{T<:AbstractMatrix{Float32}}
+    # Current time step
+    vx::T
+    vz::T
+    txx::T
+    tzz::T
+    txz::T
+    
+    # Previous time step (for HABC)
+    vx_old::T
+    vz_old::T
+    txx_old::T
+    tzz_old::T
+    txz_old::T
+end
+
+"""
+    Wavefield(nx, nz, backend::AbstractBackend)
+
+Create zero-initialized wavefield on specified backend.
+"""
+function Wavefield(nx::Int, nz::Int, b::CPUBackend)
+    return Wavefield(
+        zeros(Float32, nx, nz), zeros(Float32, nx, nz),
+        zeros(Float32, nx, nz), zeros(Float32, nx, nz), zeros(Float32, nx, nz),
+        zeros(Float32, nx, nz), zeros(Float32, nx, nz),
+        zeros(Float32, nx, nz), zeros(Float32, nx, nz), zeros(Float32, nx, nz)
+    )
+end
+
+function Wavefield(nx::Int, nz::Int, b::CUDABackend)
+    return Wavefield(
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz),
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz),
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz),
+        CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz), CUDA.zeros(Float32, nx, nz)
+    )
+end
+
+# ==============================================================================
+# Medium - Parametric over array type
+# ==============================================================================
+
+"""
+    Medium{T}
+
+Physical properties of the simulation domain.
+"""
+struct Medium{T<:AbstractMatrix{Float32}}
     nx::Int
     nz::Int
+    dx::Float32
+    dz::Float32
     x_max::Float32
     z_max::Float32
+    M::Int              # FD half-stencil width
+    pad::Int            # Boundary padding
+    is_free_surface::Bool
+    
+    # Material properties
+    rho_vx::T
+    rho_vz::T
+    lam::T
+    mu_txx::T
+    mu_txz::T
+end
+
+# ==============================================================================
+# HABC Configuration - Parametric
+# ==============================================================================
+
+"""
+    HABCConfig{T}
+
+Higdon Absorbing Boundary Condition parameters.
+"""
+struct HABCConfig{T<:AbstractMatrix{Float32}}
+    nbc::Int
+    qx::Float32
+    qz::Float32
+    qt_x::Float32
+    qt_z::Float32
+    qxt::Float32
+    
+    w_vx::T
+    w_vz::T
+    w_tau::T
+end
+
+# ==============================================================================
+# Source & Receiver - Parametric
+# ==============================================================================
+
+"""
+    Source{V<:AbstractVector}
+
+Single source configuration.
+"""
+struct Source{V<:AbstractVector{Float32}, I<:Integer}
+    i::I                # X grid index
+    j::I                # Z grid index
+    wavelet::V          # Source time function
 end
 
 """
-    Medium
-Stores the physical properties and geometry of the simulation domain.
-The staggered grid offsets are defined as:
-- (0.0, 0.0): vx, rho_vx
-- (0.5, 0.0): txx, tzz, lam, mu_txx
-- (0.0, 0.5): txz, mu_txz
-- (0.5, 0.5): vz, rho_vz
+    Receivers{T,I}
 
-# Fields
-- `nx::Int`: Grid points in X (including padding)
-- `nz::Int`: Grid points in Z (including padding) 
-- `dx::Float32`: Grid spacing in X
-- `dz::Float32`: Grid spacing in Z
-- `x_max::Float32`: Maximum X coordinate
-- `z_max::Float32`: Maximum Z coordinate
-- `M::Int`: Finite difference half-operator length
-- `pad::Int`: Boundary padding width (nbc + M)
-- `is_free_surface::Bool`: Top boundary condition flag
-- `rho_vx::Array{Float32,2}`: Effective buoyancy for vx-update
-- `rho_vz::Array{Float32,2}`: Effective buoyancy for vz-update
-- `lam::Array{Float32,2}`: Lame parameter Lambda (at txx/tzz nodes)
-- `mu_txx::Array{Float32,2}`: Mu at (i+0.5, j) for txx/tzz updates
-- `mu_txz::Array{Float32,2}`: Mu at (i, j+0.5) for txz update
+Receiver configuration and data buffer.
 """
-struct Medium
-    # Grid Dimensions
-    nx::Int                 # Total grid points in X (including padding)
-    nz::Int                 # Total grid points in Z (including padding)
-    dx::Float32             # Grid spacing in X
-    dz::Float32             # Grid spacing in Z
-    x_max::Float32          # Maximum X coordinate
-    z_max::Float32          # Maximum Z coordinate
-
-    # Simulation Parameters
-    M::Int                  # Finite difference half-operator length
-    pad::Int                # Boundary padding width (nbc + M)
-    is_free_surface::Bool   # Top boundary condition flag
-
-    # Material Properties (Buoyancy and Lame parameters)
-    # Positions: vx(i,j), vz(i+0.5, j+0.5), txx(i+0.5, j), txz(i, j+0.5)
-    rho_vx::Array{Float32,2}  # Effective buoyancy for vx-update
-    rho_vz::Array{Float32,2}  # Effective buoyancy for vz-update
-    lam::Array{Float32,2}     # Lame parameter Lambda (at txx/tzz nodes)
-    mu_txx::Array{Float32,2}  # Mu at (i+0.5, j) for txx/tzz updates
-    mu_txz::Array{Float32,2}  # Mu at (i, j+0.5) for txz update
+struct Receivers{T<:AbstractMatrix{Float32}, I<:AbstractVector{<:Integer}}
+    i::I                    # X indices
+    j::I                    # Z indices
+    data::T                 # [nt × n_rec]
+    type::Symbol            # :vz, :vx, :p
 end
 
-"""
-    Wavefield
-Holds the stress and velocity components for the current and previous time steps.
-The '_old' fields are essential for Higdon Absorbing Boundary Conditions (HABC).
+# ==============================================================================
+# Simulation Parameters (immutable, no arrays)
+# ==============================================================================
 
-# Fields
-- `vx::Array{Float32,2}`: X-velocity field
-- `vz::Array{Float32,2}`: Z-velocity field
-- `txx::Array{Float32,2}`: Normal stress component
-- `tzz::Array{Float32,2}`: Normal stress component
-- `txz::Array{Float32,2}`: Shear stress component
-- `vx_old::Array{Float32,2}`: X-velocity field at previous time step
-- `vz_old::Array{Float32,2}`: Z-velocity field at previous time step
-- `txx_old::Array{Float32,2}`: Normal stress at previous time step
-- `tzz_old::Array{Float32,2}`: Normal stress at previous time step
-- `txz_old::Array{Float32,2}`: Shear stress at previous time step
 """
-mutable struct Wavefield
-    # Current wavefield components
-    vx::Array{Float32,2}
-    vz::Array{Float32,2}
-    txx::Array{Float32,2}
-    tzz::Array{Float32,2}
-    txz::Array{Float32,2}
+    SimParams
 
-    # Time-delayed buffers (t - dt) for boundary updates
-    vx_old::Array{Float32,2}
-    vz_old::Array{Float32,2}
-    txx_old::Array{Float32,2}
-    tzz_old::Array{Float32,2}
-    txz_old::Array{Float32,2}
+Time stepping and grid parameters.
+"""
+struct SimParams
+    dt::Float32
+    nt::Int
+    dtx::Float32        # dt/dx
+    dtz::Float32        # dt/dz
+    fd_order::Int
+    M::Int              # FD half-stencil width
 end
 
-"""
-    HABCConfig
-Coefficients and weights for the Hybrid Absorbing Boundary Condition.
-
-# Fields
-- `nbc::Int`: Thickness of the boundary layer
-- `qx::Float32`: Spatial discretization term in X
-- `qz::Float32`: Spatial discretization term in Z
-- `qt_x::Float32`: Temporal term for X-boundary
-- `qt_z::Float32`: Temporal term for Z-boundary
-- `qxt::Float32`: Cross-derivative term
-- `w_vx::Array{Float32,2}`: Weighting array for vx component
-- `w_vz::Array{Float32,2}`: Weighting array for vz component
-- `w_tau::Array{Float32,2}`: Weighting array for stress components (txx, tzz, txz)
-"""
-struct HABCConfig
-    nbc::Int                # Thickness of the boundary layer
-    qx::Float32             # Spatial discretization term in X
-    qz::Float32             # Spatial discretization term in Z
-    qt_x::Float32           # Temporal term for X-boundary
-    qt_z::Float32           # Temporal term for Z-boundary
-    qxt::Float32            # Cross-derivative term
-
-    # Hybrid weighting arrays (Transition from FD to ABC)
-    w_vx::Array{Float32,2}
-    w_vz::Array{Float32,2}
-    w_tau::Array{Float32,2} # Weights for stress components (txx, tzz, txz)
-end
-
-"""
-    Sources
-Seismic source parameters including injection points and wavelets.
-
-# Fields
-- `i::Vector{Int}`: X-coordinates (grid indices)
-- `j::Vector{Int}`: Z-coordinates (grid indices)
-- `type::String`: Source type: "pressure", "force_x", "force_z"
-- `wavelet::Vector{Float32}`: Time-series signal
-"""
-struct Sources
-    i::Vector{Int}           # X-coordinates (grid indices)
-    j::Vector{Int}           # Z-coordinates (grid indices)
-    type::String             # Source type: "pressure", "force_x", "force_z"
-    wavelet::Vector{Float32} # Time-series signal
-end
-
-"""
-    Receivers
-Configuration for recording seismic data at specific locations.
-
-# Fields
-- `i::Vector{Int}`: X-coordinates (grid indices)
-- `j::Vector{Int}`: Z-coordinates (grid indices)
-- `type::String`: Record type: "vx", "vz", "p", or "Vel"
-- `data::Array{Float32,2}`: Recorded data [time_steps × n_receivers]
-"""
-struct Receivers
-    i::Vector{Int}           # X-coordinates (grid indices)
-    j::Vector{Int}           # Z-coordinates (grid indices)
-    type::String             # Record type: "vx", "vz", "p", or "Vel"
-    data::Array{Float32,2}   # Recorded data [time_steps × n_receivers]
-end
-
-"""
-    Geometry
-Survey design container that bundles sources and receivers.
-
-# Fields
-- `sources::Sources`: Source configuration
-- `receivers::Receivers`: Receiver configuration
-"""
-struct Geometry
-    sources::Sources
-    receivers::Receivers
-end
-
-"""
-    VideoConfig
-Settings for real-time visualization and video export.
-
-# Fields
-- `save_gap::Int`: Frame capture interval (time steps)
-- `stride::Int`: Spatial downsampling factor
-- `v_max::Float32`: Colorbar saturation limit
-- `mode::Symbol`: Field to plot: :p, :vx, or :vel
-- `filename::String`: Output path for .mp4 file
-- `fps::Int`: Video frame rate
-"""
-struct VideoConfig
-    save_gap::Int            # Frame capture interval (time steps)
-    stride::Int              # Spatial downsampling factor
-    v_max::Float32           # Colorbar saturation limit
-    mode::Symbol             # Field to plot: :p, :vx, or :vel
-    filename::String         # Output path for .mp4 file
-    fps::Int                 # Video frame rate
+function SimParams(dt, nt, dx, dz, fd_order)
+    M = fd_order ÷ 2
+    SimParams(Float32(dt), nt, Float32(dt/dx), Float32(dt/dz), fd_order, M)
 end

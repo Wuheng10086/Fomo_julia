@@ -1,80 +1,115 @@
-# src/Elastic2D.jl
+# ==============================================================================
+# Elastic2D.jl
+#
+# 2D Elastic Wave Simulation Framework
 # 
-# Unified module for 2D Elastic Wave Simulation supporting both CPU and GPU
-# 
-# This module provides a complete implementation of 2D elastic wave propagation
-# using staggered-grid finite differences. It supports both CPU execution (with 
-# multi-threading and SIMD optimization) and GPU execution (with CUDA acceleration).
-# 
-# Features:
-# - High-order staggered-grid finite difference method
-# - Higdon Absorbing Boundary Conditions (HABC) implementation
-# - Free surface boundary condition support
-# - Video export with CairoMakie in headless mode
-# - Multi-threading and SIMD optimization via @tturbo
-# - CUDA acceleration for high-performance computing
-# - Automatic CPU/GPU data transfer
-# - SEG-Y model loading
-# 
-# Usage:
-# ```julia
-# using Elastic2D
-# # Set up medium, sources, receivers, etc.
-# # For CPU:
-# solve_elastic!(wavefield, medium, habc, coeffs, geometry, dt, nt, order)
-# # For GPU:
-# solve_elastic_gpu!(wavefield_gpu, medium_gpu, habc_gpu, coeffs_gpu, geometry_gpu, dt, nt, order)
-# ```
+# Key Design: Backend-dispatched kernels
+# - Write simulation logic ONCE
+# - Backend determines CPU/GPU execution
+# ==============================================================================
 
 module Elastic2D
 
-using Printf, Dates, Statistics
-using LoopVectorization
-using CairoMakie, ProgressMeter
-using Interpolations, SegyIO
+# ==============================================================================
+# Dependencies
+# ==============================================================================
 
-# If CUDA is available, include it
-const CUDA_AVAILABLE = Ref{Bool}(false)
+using LoopVectorization
+using ProgressMeter
+using Printf
+using CairoMakie
+using JLD2
+
+# CUDA support (conditional)
+const CUDA_AVAILABLE = Ref(false)
+
 try
     using CUDA
-    CUDA_AVAILABLE[] = true
+    if CUDA.functional()
+        CUDA_AVAILABLE[] = true
+        @info "CUDA available: GPU acceleration enabled"
+    end
 catch
-    @warn "CUDA not available. GPU functionality will be disabled."
-    CUDA_AVAILABLE[] = false
+    @warn "CUDA not available"
 end
 
-# Export data structures
-export Medium, Wavefield, Geometry, VideoConfig, Sources, Receivers, ElasticModel
+# ==============================================================================
+# Exports
+# ==============================================================================
 
-# Export utility functions
-export get_fd_coefficients, init_habc, init_medium_from_data
-export setup_sources, setup_line_receivers, plot_model_setup
-export ricker_wavelet, build_wavelet
-export setup_receivers_from_positions, setup_sources_from_positions, generate_positions
-export save_bin_model, save_jld2_model, load_jld2_model
-export load_segy_model, read_segy_field, sanitize!
-export generate_mp4_from_buffer, save_shot_gather_png, save_shot_gather_raw, save_shot_gather_bin
+# Backend system
+export AbstractBackend, CPUBackend, CUDABackend
+export CPU_BACKEND, CUDA_BACKEND
+export backend, to_device, synchronize
 
-# Export GPU-related items if CUDA is available
-if CUDA_AVAILABLE[]
-    export MediumGPU, WavefieldGPU, HABCConfigGPU, SourcesGPU, ReceiversGPU, GeometryGPU
-    export to_gpu, solve_elastic_gpu!, run_multi_shots_gpu
-end
+# Data structures
+export Wavefield, Medium, HABCConfig
+export Source, Receivers, SimParams
+export ShotConfig, MultiShotConfig, ShotResult
 
-# Include sub-modules in dependency order
-include("core/Structures.jl")    # Data structures
+# Initialization
+export init_medium, init_habc, setup_receivers
+export get_fd_coefficients, ricker_wavelet
 
-# Include GPU structures if CUDA is available
-if CUDA_AVAILABLE[]
-    include("core/Structures_cuda.jl")  # GPU structures and GPU transfer functions
-end
+# Kernels (for advanced users)
+export update_velocity!, update_stress!
+export apply_habc!, apply_habc_velocity!, apply_habc_stress!
+export backup_boundary!, apply_free_surface!
+export inject_source!, record_receivers!, reset!
 
-include("utils/Utils.jl")        # Utility functions
-include("solvers/Solver.jl")     # CPU solver implementations
+# Simulation interface
+export TimeStepInfo
+export time_step!, run_time_loop!
+export run_shot!, run_shots!
 
-# Include GPU solvers if CUDA is available
-if CUDA_AVAILABLE[]
-    include("solvers/Solver_cuda.jl")  # GPU solver implementations
-end
+# Visualization (optional callback)
+export VideoConfig, VideoRecorder, MultiFieldRecorder
 
-end
+# IO
+export save_gather, load_gather
+
+# Model IO
+export VelocityModel, load_model, save_model, convert_model, model_info
+
+# Geometry IO (for migration)
+export SurveyGeometry, MultiShotGeometry
+export create_geometry, save_geometry, load_geometry
+
+# Utilities
+export is_cuda_available
+is_cuda_available() = CUDA_AVAILABLE[]
+
+# ==============================================================================
+# Include Files
+# ==============================================================================
+
+# Backend abstraction
+include("backends/backend.jl")
+
+# Core structures
+include("core/structures.jl")
+
+# Kernels
+include("kernels/velocity.jl")
+include("kernels/stress.jl")
+include("kernels/boundary.jl")
+include("kernels/source_receiver.jl")
+
+# Simulation
+include("simulation/time_stepper.jl")
+include("simulation/shot_manager.jl")
+
+# IO (must be before utils/init.jl which uses VelocityModel)
+include("io/output.jl")
+include("io/model_loader.jl")
+
+# Utilities (uses VelocityModel from model_loader.jl)
+include("utils/init.jl")
+
+# Geometry IO (uses ShotResult from shot_manager.jl)
+include("io/geometry_io.jl")
+
+# Visualization (optional)
+include("visualization/video_recorder.jl")
+
+end # module
