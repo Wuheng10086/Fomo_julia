@@ -52,3 +52,39 @@ output/*
 *.bak
 *~
 \#*\#
+
+# Large model files that exceed GitHub's 100MB limit
+models/Marmousi2/*.segy
+models/Marmousi2/*.jld2
+models/SEAM/*.segy
+models/SEAM/*.jld2
+
+# Secret files
+*.env
+
+# julia
+Manifest.toml
+*.jl~
+
+# Build
+build/
+dist/
+*.so
+*.dll
+*.dylib
+
+# Debug
+log/
+logs/
+
+# Test
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Julia specific
+.julia/
+*.cov
+*.stats

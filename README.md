@@ -8,7 +8,6 @@
 
 ## ✨ Core Features
 
-* **Backend-Dispatched Architecture**: Write simulation logic **once**, seamlessly switch between CPU and GPU with a single line change.
 * **High-Order Staggered-Grid (SGFD)**: Based on Luo & Schuster (1990), implementing spatial staggered sampling for velocity-stress fields with support for **2M-order** accuracy.
 * **Hybrid Absorbing Boundary (HABC)**: Following Liu & Sen (2012), effectively suppresses artificial reflections by blending one-way wave extrapolation with spatial weighting.
 * **Free Surface Simulation**: Supports top free-surface boundary conditions for accurate surface wave (Rayleigh wave) modeling.
