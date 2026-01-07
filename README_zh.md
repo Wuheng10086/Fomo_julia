@@ -8,6 +8,7 @@
 
 ## ✨ 核心特性
 
+* **Backend 调度架构**：模拟逻辑**只写一遍**，CPU/GPU 切换只需改一行代码。
 * **高阶交错网格 (SGFD)**：基于 Luo & Schuster (1990) 的原理，实现速度-应力场的空间交错采样，支持 **2M 阶** 空间精度。
 * **混合吸收边界 (HABC)**：参考 Liu & Sen (2012) 的方案，通过单程波外推与空间权重融合，有效抑制人工边界反射。
 * **自由表面模拟**：支持顶部自由表面边界条件，可精确模拟地表面波（Rayleigh waves）。
@@ -33,14 +34,27 @@ run_shots!(BACKEND, wavefield, medium, ...)
 
 ### 智能模型加载器
 ```julia
-# 根据扩展名自动识别格式
-model = load_model("marmousi.jld2")                    # Julia 原生（最快）
-model = load_model("model.segy"; dx=12.5)              # SEG-Y
-model = load_model("vp.bin"; nx=500, nz=200, dx=10.0)  # Binary
-model = load_model("model.mat"; dx=10.0)               # MATLAB
+# 从单个 JLD2 文件加载（最快，推荐）
+model = load_model("marmousi.jld2")
 
-# 转换任意格式到 JLD2（推荐）
-convert_model("model.segy", "model.jld2"; dx=12.5)
+# 从分开的 Vp/Vs/Rho 文件加载（常见工作流）
+model = load_model_files(
+    vp = "vp.segy",
+    vs = "vs.segy", 
+    rho = "rho.segy",
+    dx = 12.5
+)
+
+# Binary 文件（需要指定维度）
+model = load_model_files(
+    vp = "vp.bin",
+    vs = "vs.bin",
+    rho = "rho.bin",
+    dx = 10.0, nx = 500, nz = 200
+)
+
+# 只有 Vp（Vs 和 Rho 会自动估算）
+model = load_model_files(vp="vp.segy", dx=10.0)
 
 # 直接用于模拟
 medium = init_medium(model, nbc, fd_order, BACKEND)
@@ -126,7 +140,16 @@ julia -t auto run.jl path/to/model.jld2
 
 ### 转换模型格式
 ```bash
-julia scripts/convert_model.jl model.segy model.jld2 --dx=12.5
+# 三个 SEG-Y 文件
+julia scripts/convert_model.jl --vp=vp.segy --vs=vs.segy --rho=rho.segy \
+      -o model.jld2 --dx=12.5
+
+# 三个 Binary 文件
+julia scripts/convert_model.jl --vp=vp.bin --vs=vs.bin --rho=rho.bin \
+      -o model.jld2 --dx=10 --nx=500 --nz=200
+
+# 只有 Vp（Vs 和 Rho 自动估算）
+julia scripts/convert_model.jl --vp=vp.segy -o model.jld2 --dx=10
 ```
 
 ### 加载模拟结果

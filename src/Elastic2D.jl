@@ -69,7 +69,7 @@ export VideoConfig, VideoRecorder, MultiFieldRecorder
 export save_gather, load_gather
 
 # Model IO
-export VelocityModel, load_model, save_model, convert_model, model_info
+export VelocityModel, load_model, load_model_files, save_model, convert_model, model_info
 
 # Geometry IO (for migration)
 export SurveyGeometry, MultiShotGeometry

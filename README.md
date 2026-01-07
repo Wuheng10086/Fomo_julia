@@ -4,11 +4,11 @@
 
 **Fomo_julia** is a high-performance 2D isotropic elastic wave numerical simulator developed in Julia. It employs a high-order staggered-grid finite-difference (SGFD) scheme combined with an advanced Hybrid Absorbing Boundary Condition (HABC). 
 
-
-https://github.com/user-attachments/assets/bc0adaac-b37c-4859-9303-9dcff79c1cc3
+![Simulation Example](homogeneous_test.gif)
 
 ## ✨ Core Features
 
+* **Backend-Dispatched Architecture**: Write simulation logic **once**, seamlessly switch between CPU and GPU with a single line change.
 * **High-Order Staggered-Grid (SGFD)**: Based on Luo & Schuster (1990), implementing spatial staggered sampling for velocity-stress fields with support for **2M-order** accuracy.
 * **Hybrid Absorbing Boundary (HABC)**: Following Liu & Sen (2012), effectively suppresses artificial reflections by blending one-way wave extrapolation with spatial weighting.
 * **Free Surface Simulation**: Supports top free-surface boundary conditions for accurate surface wave (Rayleigh wave) modeling.
@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/bc0adaac-b37c-4859-9303-9dcff79c1cc3
 
 ---
 
-## 🎯 What's New
+## 🎯 What's New in v2
 
 ### Unified Backend Architecture
 ```julia
@@ -32,17 +32,29 @@ medium = init_medium(vp, vs, rho, dx, dz, nbc, fd_order, BACKEND)
 run_shots!(BACKEND, wavefield, medium, ...)
 ```
 
-
 ### Smart Model Loader
 ```julia
-# Auto-detects format from extension
-model = load_model("marmousi.jld2")                    # Julia native (fastest)
-model = load_model("model.segy"; dx=12.5)              # SEG-Y
-model = load_model("vp.bin"; nx=500, nz=200, dx=10.0)  # Binary
-model = load_model("model.mat"; dx=10.0)               # MATLAB
+# Load from single JLD2 file (fastest, recommended)
+model = load_model("marmousi.jld2")
 
-# Convert any format to JLD2 (recommended)
-convert_model("model.segy", "model.jld2"; dx=12.5)
+# Load from separate Vp/Vs/Rho files (common workflow)
+model = load_model_files(
+    vp = "vp.segy",
+    vs = "vs.segy", 
+    rho = "rho.segy",
+    dx = 12.5
+)
+
+# Binary files (need dimensions)
+model = load_model_files(
+    vp = "vp.bin",
+    vs = "vs.bin",
+    rho = "rho.bin",
+    dx = 10.0, nx = 500, nz = 200
+)
+
+# Only Vp (Vs and Rho will be estimated)
+model = load_model_files(vp="vp.segy", dx=10.0)
 
 # Use directly in simulation
 medium = init_medium(model, nbc, fd_order, BACKEND)
@@ -128,7 +140,16 @@ julia -t auto run.jl path/to/model.jld2
 
 ### Convert Model Format
 ```bash
-julia scripts/convert_model.jl model.segy model.jld2 --dx=12.5
+# Three SEG-Y files
+julia scripts/convert_model.jl --vp=vp.segy --vs=vs.segy --rho=rho.segy \
+      -o model.jld2 --dx=12.5
+
+# Three binary files
+julia scripts/convert_model.jl --vp=vp.bin --vs=vs.bin --rho=rho.bin \
+      -o model.jld2 --dx=10 --nx=500 --nz=200
+
+# Only Vp (Vs and Rho estimated)
+julia scripts/convert_model.jl --vp=vp.segy -o model.jld2 --dx=10
 ```
 
 ### Load Simulation Results

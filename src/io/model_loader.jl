@@ -7,6 +7,15 @@
 
 # JLD2 is already imported at module level
 
+# Optional packages - try to load at module init
+const _HAS_SEGYIO = Ref(false)
+const _HAS_MAT = Ref(false)  
+const _HAS_NPZ = Ref(false)
+const _HAS_HDF5 = Ref(false)
+
+# These will be set during module initialization
+# Use Base.invokelatest when calling functions from dynamically loaded modules
+
 # ==============================================================================
 # Standard Model Structure
 # ==============================================================================
@@ -191,16 +200,22 @@ function _load_segy(path; dx=nothing, dz=nothing,
                     vs=nothing, rho=nothing, kwargs...)
     
     # Check if SegyIO is available
-    if !isdefined(Main, :SegyIO) && !@isdefined(SegyIO)
-        try
-            @eval using SegyIO
-        catch
-            error("SegyIO.jl not installed. Run: using Pkg; Pkg.add(\"SegyIO\")")
-        end
+    if !isdefined(@__MODULE__, :SegyIO) && !isdefined(Main, :SegyIO)
+        error("""
+        SegyIO.jl is required for SEG-Y files but not loaded.
+        Please add to your script before calling load_model:
+        
+            using SegyIO
+        
+        Or install it: using Pkg; Pkg.add("SegyIO")
+        """)
     end
     
+    # Get the SegyIO module
+    SegyIO_mod = isdefined(@__MODULE__, :SegyIO) ? (@__MODULE__).SegyIO : Main.SegyIO
+    
     @info "Loading SEG-Y file: $path"
-    block = SegyIO.segy_read(path)
+    block = Base.invokelatest(SegyIO_mod.segy_read, path)
     vp = Float32.(block.data)
     
     # Try to get spacing from header
@@ -212,7 +227,7 @@ function _load_segy(path; dx=nothing, dz=nothing,
     
     # Handle vs and rho
     vs_data = if vs isa String && (endswith(vs, ".segy") || endswith(vs, ".sgy"))
-        Float32.(SegyIO.segy_read(vs).data)
+        Float32.(Base.invokelatest(SegyIO_mod.segy_read, vs).data)
     elseif vs === nothing
         @warn "vs not provided, estimating vs = vp / 1.73"
         vp ./ 1.73f0
@@ -221,7 +236,7 @@ function _load_segy(path; dx=nothing, dz=nothing,
     end
     
     rho_data = if rho isa String && (endswith(rho, ".segy") || endswith(rho, ".sgy"))
-        Float32.(SegyIO.segy_read(rho).data)
+        Float32.(Base.invokelatest(SegyIO_mod.segy_read, rho).data)
     elseif rho === nothing
         @warn "rho not provided, using Gardner relation"
         310.0f0 .* (vp .^ 0.25f0)
@@ -239,15 +254,16 @@ end
 function _load_mat(path; vp_key="vp", vs_key="vs", rho_key="rho",
                    dx=1.0, dz=nothing, kwargs...)
     
-    if !@isdefined(MAT)
-        try
-            @eval using MAT
-        catch
-            error("MAT.jl not installed. Run: using Pkg; Pkg.add(\"MAT\")")
-        end
+    if !isdefined(@__MODULE__, :MAT) && !isdefined(Main, :MAT)
+        error("""
+        MAT.jl is required for .mat files but not loaded.
+        Please add to your script: using MAT
+        Or install it: using Pkg; Pkg.add("MAT")
+        """)
     end
     
-    data = MAT.matread(path)
+    MAT_mod = isdefined(@__MODULE__, :MAT) ? (@__MODULE__).MAT : Main.MAT
+    data = Base.invokelatest(MAT_mod.matread, path)
     
     vp = Float32.(get(data, vp_key, get(data, "Vp", get(data, "VP", nothing))))
     if vp === nothing
@@ -271,19 +287,21 @@ end
 
 function _load_npy(path; dx=1.0, dz=nothing, vs=nothing, rho=nothing, kwargs...)
     
-    if !@isdefined(NPZ)
-        try
-            @eval using NPZ
-        catch
-            error("NPZ.jl not installed. Run: using Pkg; Pkg.add(\"NPZ\")")
-        end
+    if !isdefined(@__MODULE__, :NPZ) && !isdefined(Main, :NPZ)
+        error("""
+        NPZ.jl is required for .npy files but not loaded.
+        Please add to your script: using NPZ
+        Or install it: using Pkg; Pkg.add("NPZ")
+        """)
     end
     
-    vp = Float32.(NPZ.npzread(path))
+    NPZ_mod = isdefined(@__MODULE__, :NPZ) ? (@__MODULE__).NPZ : Main.NPZ
+    
+    vp = Float32.(Base.invokelatest(NPZ_mod.npzread, path))
     dz = dz === nothing ? dx : dz
     
     vs_data = if vs isa String
-        Float32.(NPZ.npzread(vs))
+        Float32.(Base.invokelatest(NPZ_mod.npzread, vs))
     elseif vs === nothing
         vp ./ 1.73f0
     else
@@ -291,7 +309,7 @@ function _load_npy(path; dx=1.0, dz=nothing, vs=nothing, rho=nothing, kwargs...)
     end
     
     rho_data = if rho isa String
-        Float32.(NPZ.npzread(rho))
+        Float32.(Base.invokelatest(NPZ_mod.npzread, rho))
     elseif rho === nothing
         310.0f0 .* (vp .^ 0.25f0)
     else
@@ -308,15 +326,17 @@ end
 function _load_hdf5(path; vp_key="vp", vs_key="vs", rho_key="rho",
                     dx=1.0, dz=nothing, kwargs...)
     
-    if !@isdefined(HDF5)
-        try
-            @eval using HDF5
-        catch
-            error("HDF5.jl not installed. Run: using Pkg; Pkg.add(\"HDF5\")")
-        end
+    if !isdefined(@__MODULE__, :HDF5) && !isdefined(Main, :HDF5)
+        error("""
+        HDF5.jl is required for .h5/.hdf5 files but not loaded.
+        Please add to your script: using HDF5
+        Or install it: using Pkg; Pkg.add("HDF5")
+        """)
     end
     
-    h5open(path, "r") do file
+    HDF5_mod = isdefined(@__MODULE__, :HDF5) ? (@__MODULE__).HDF5 : Main.HDF5
+    
+    Base.invokelatest(HDF5_mod.h5open, path, "r") do file
         vp = Float32.(read(file, vp_key))
         vs = haskey(file, vs_key) ? Float32.(read(file, vs_key)) : vp ./ 1.73f0
         rho = haskey(file, rho_key) ? Float32.(read(file, rho_key)) : 310.0f0 .* (vp .^ 0.25f0)
@@ -405,3 +425,133 @@ function model_info(model::VelocityModel)
 end
 
 model_info(path::String; kwargs...) = model_info(load_model(path; kwargs...))
+
+# ==============================================================================
+# Load from Separate Files (Common Workflow)
+# ==============================================================================
+
+"""
+    load_model_files(; vp, vs=nothing, rho=nothing, dx, dz=dx, nx=nothing, nz=nothing, kwargs...)
+
+Load model from separate Vp, Vs, Rho files.
+
+This is the most common workflow where each property is stored in a separate file.
+Supports mixed formats (e.g., Vp as SEG-Y, Vs as binary).
+
+# Arguments
+- `vp`: Path to Vp file (required)
+- `vs`: Path to Vs file (optional, defaults to Vp/1.73)
+- `rho`: Path to density file (optional, defaults to Gardner relation)
+- `dx`, `dz`: Grid spacing
+- `nx`, `nz`: Grid dimensions (required for binary files)
+
+# Examples
+```julia
+# Three SEG-Y files
+model = load_model_files(vp="vp.segy", vs="vs.segy", rho="rho.segy", dx=12.5)
+
+# Three binary files
+model = load_model_files(vp="vp.bin", vs="vs.bin", rho="rho.bin", 
+                         dx=10.0, nx=500, nz=200)
+
+# Only Vp (Vs and Rho estimated)
+model = load_model_files(vp="vp.segy", dx=10.0)
+
+# Mixed formats
+model = load_model_files(vp="vp.segy", vs="vs.bin", rho="rho.mat",
+                         dx=10.0, nx=500, nz=200)
+```
+"""
+function load_model_files(; vp::String, 
+                           vs::Union{String,Nothing}=nothing, 
+                           rho::Union{String,Nothing}=nothing,
+                           dx::Real, dz::Union{Real,Nothing}=nothing,
+                           nx::Union{Int,Nothing}=nothing, 
+                           nz::Union{Int,Nothing}=nothing,
+                           order::Symbol=:column_major,
+                           name::String="model")
+    
+    dz = dz === nothing ? dx : dz
+    
+    # Helper to read a single file
+    function read_file(path::String)
+        ext = lowercase(splitext(path)[2])
+        
+        if ext in [".segy", ".sgy"]
+            if !isdefined(@__MODULE__, :SegyIO) && !isdefined(Main, :SegyIO)
+                error("SegyIO.jl required. Add 'using SegyIO' to your script.")
+            end
+            SegyIO_mod = isdefined(Main, :SegyIO) ? Main.SegyIO : (@__MODULE__).SegyIO
+            return Float32.(Base.invokelatest(SegyIO_mod.segy_read, path).data)
+            
+        elseif ext == ".bin"
+            if nx === nothing || nz === nothing
+                error("Binary files require nx and nz parameters")
+            end
+            data = zeros(Float32, nx * nz)
+            open(path, "r") do io
+                read!(io, data)
+            end
+            if order == :row_major
+                return permutedims(reshape(data, nz, nx))
+            else
+                return reshape(data, nx, nz)
+            end
+            
+        elseif ext == ".jld2"
+            d = JLD2.load(path)
+            for key in ["vp", "Vp", "VP", "vs", "Vs", "VS", "rho", "Rho", "data"]
+                if haskey(d, key)
+                    return Float32.(d[key])
+                end
+            end
+            error("No data found in JLD2: $path")
+            
+        elseif ext == ".npy"
+            if !isdefined(@__MODULE__, :NPZ) && !isdefined(Main, :NPZ)
+                error("NPZ.jl required. Add 'using NPZ' to your script.")
+            end
+            NPZ_mod = isdefined(Main, :NPZ) ? Main.NPZ : (@__MODULE__).NPZ
+            return Float32.(Base.invokelatest(NPZ_mod.npzread, path))
+            
+        elseif ext == ".mat"
+            if !isdefined(@__MODULE__, :MAT) && !isdefined(Main, :MAT)
+                error("MAT.jl required. Add 'using MAT' to your script.")
+            end
+            MAT_mod = isdefined(Main, :MAT) ? Main.MAT : (@__MODULE__).MAT
+            d = Base.invokelatest(MAT_mod.matread, path)
+            for (k, v) in d
+                if v isa AbstractMatrix
+                    return Float32.(v)
+                end
+            end
+            error("No matrix in MAT file: $path")
+        else
+            error("Unsupported format: $ext")
+        end
+    end
+    
+    # Load Vp
+    @info "Loading Vp" path=vp
+    vp_data = read_file(vp)
+    
+    # Load or estimate Vs
+    vs_data = if vs !== nothing
+        @info "Loading Vs" path=vs
+        read_file(vs)
+    else
+        @info "Estimating Vs = Vp / 1.73"
+        vp_data ./ 1.73f0
+    end
+    
+    # Load or estimate Rho
+    rho_data = if rho !== nothing
+        @info "Loading Rho" path=rho
+        read_file(rho)
+    else
+        @info "Estimating Rho (Gardner relation)"
+        310.0f0 .* (vp_data .^ 0.25f0)
+    end
+    
+    return VelocityModel(vp_data, vs_data, rho_data, Float32(dx), Float32(dz); name=name)
+end
